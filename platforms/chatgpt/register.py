@@ -18,6 +18,7 @@ from curl_cffi import requests as cffi_requests
 from .oauth import OAuthManager, OAuthStart
 from .http_client import OpenAIHTTPClient, HTTPClientError
 # from ..services import EmailServiceFactory, BaseEmailService, EmailServiceType  # removed: external dep
+class BaseEmailService: pass  # stub for type hints
 # from ..database import crud  # removed: external dep
 # from ..database.session import get_db  # removed: external dep
 from .constants import (

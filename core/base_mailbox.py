@@ -33,6 +33,8 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
     extra = extra or {}
     if provider == "tempmail_lol":
         return TempMailLolMailbox(proxy=proxy)
+    elif provider == "mailtm":
+        return MailTmMailbox(proxy=proxy)
     elif provider == "duckmail":
         return DuckMailMailbox(
             api_url=extra.get("duckmail_api_url", "https://www.duckmail.sbs"),
@@ -357,10 +359,12 @@ class CFWorkerMailbox(BaseMailbox):
         r = requests.post(f"{self.api}/admin/new_address",
             json=payload, headers=self._headers(),
             proxies=self.proxy, timeout=15)
+        print(f"[CFWorker] new_address status={r.status_code} resp={r.text[:200]}")
         data = r.json()
         email = data.get("email", data.get("address", ""))
         token = data.get("token", data.get("jwt", ""))
         self._token = token
+        print(f"[CFWorker] 生成邮箱: {email} token={token[:40] if token else 'NONE'}...")
         return MailboxAccount(email=email, account_id=token)
 
     def _get_mails(self, email: str) -> list:
@@ -391,8 +395,19 @@ class CFWorkerMailbox(BaseMailbox):
                     if not mid or mid in seen:
                         continue
                     seen.add(mid)
-                    text = str(mail.get("subject", "")) + " " + str(mail.get("raw", ""))
-                    m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', text))
+                    raw = str(mail.get("raw", ""))
+                    # 1. 优先匹配 <span>XXXXXX</span> （Trae 邮件格式）
+                    code_m = re.search(r'<span[^>]*>\s*(\d{6})\s*</span>', raw)
+                    if code_m:
+                        return code_m.group(1)
+                    # 2. 跳过 MIME header，只搜 body 部分，避免匹配时间戳
+                    body_start = raw.find('\r\n\r\n')
+                    search_text = raw[body_start:] if body_start != -1 else raw
+                    search_text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', search_text)
+                    # 排除时间戳模式 m=+XXXXXX. 和 t=XXXXXXXXXX
+                    search_text = re.sub(r'm=\+\d+\.\d+', '', search_text)
+                    search_text = re.sub(r'\bt=\d+\b', '', search_text)
+                    m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', search_text)
                     if m:
                         return m.group(1)
             except Exception:
@@ -571,6 +586,73 @@ class FreemailMailbox(BaseMailbox):
                     text = str(msg.get("preview", "")) + " " + str(msg.get("subject", ""))
                     m = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
                     if m: return m.group(1)
+            except Exception:
+                pass
+            time.sleep(3)
+        return ""
+
+
+class MailTmMailbox(BaseMailbox):
+    """Mail.tm 免费临时邮箱"""
+    API = "https://api.mail.tm"
+
+    def __init__(self, proxy: str = None):
+        self.proxy = {"http": proxy, "https": proxy} if proxy else None
+        self._email = None
+        self._token = None
+
+    def _req(self):
+        import requests
+        s = requests.Session()
+        if self.proxy:
+            s.proxies = self.proxy
+        if self._token:
+            s.headers["Authorization"] = f"Bearer {self._token}"
+        return s
+
+    def get_email(self) -> MailboxAccount:
+        import requests, random, string
+        s = self._req()
+        domains = s.get(f"{self.API}/domains", timeout=15).json()
+        domain = domains["hydra:member"][0]["domain"]
+        name = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        addr = f"{name}@{domain}"
+        pwd = "Tmp" + "".join(random.choices(string.ascii_letters + string.digits, k=10))
+        s.post(f"{self.API}/accounts",
+               json={"address": addr, "password": pwd}, timeout=15)
+        r = s.post(f"{self.API}/token",
+                   json={"address": addr, "password": pwd}, timeout=15)
+        self._token = r.json().get("token", "")
+        self._email = addr
+        self._pwd = pwd
+        return MailboxAccount(email=addr, account_id=addr, extra={"password": pwd})
+
+    def get_current_ids(self, account: MailboxAccount) -> set:
+        try:
+            r = self._req().get(f"{self.API}/messages", timeout=10)
+            return {str(m["id"]) for m in r.json().get("hydra:member", [])}
+        except Exception:
+            return set()
+
+    def wait_for_code(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import re, time
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                msgs = self._req().get(f"{self.API}/messages", timeout=10).json().get("hydra:member", [])
+                for msg in msgs:
+                    mid = str(msg.get("id", ""))
+                    if not mid or mid in seen:
+                        continue
+                    # 获取完整邮件内容
+                    full = self._req().get(f"{self.API}/messages/{mid}", timeout=10).json()
+                    seen.add(mid)
+                    text = full.get("text", "") + " " + full.get("subject", "")
+                    m = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+                    if m:
+                        return m.group(1)
             except Exception:
                 pass
             time.sleep(3)

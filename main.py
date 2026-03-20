@@ -1,6 +1,9 @@
 """account_manager - 多平台账号管理后台"""
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from core.db import init_db
 from core.registry import load_all
 from api.accounts import router as accounts_router
@@ -25,6 +28,17 @@ app.include_router(platforms_router, prefix="/api")
 app.include_router(proxies_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(actions_router, prefix="/api")
+
+# 挂载前端静态文件
+_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.exists(_dist):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_dist, "assets")), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str = ""):
+        index = os.path.join(_dist, "index.html")
+        return FileResponse(index)
 
 
 @app.on_event("startup")
@@ -60,6 +74,16 @@ def solver_restart():
     stop()
     start_async()
     return {"message": "重启中"}
+
+
+# 挂载前端静态文件（生产模式）
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_static_dir, "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        return FileResponse(os.path.join(_static_dir, "index.html"))
 
 
 if __name__ == "__main__":
