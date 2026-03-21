@@ -60,8 +60,8 @@ def execute_action(
                 acc_model.set_extra(extra)
                 if data.get("access_token"):
                     acc_model.token = data["access_token"]
-                from datetime import datetime
-                acc_model.updated_at = datetime.utcnow()
+                from datetime import datetime, timezone
+                acc_model.updated_at = datetime.now(timezone.utc)
                 session.add(acc_model)
                 session.commit()
         return result

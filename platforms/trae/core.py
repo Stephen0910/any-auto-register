@@ -60,11 +60,8 @@ class TraeRegister:
         self.log("验证码已发送，等待邮件...")
         return r.json().get("data", {}).get("email_ticket", "")
 
-    def step3_register(self, email: str, password: str, otp: str, email_ticket: str = ""):
-        self.log("提交注册...")
-        data = {"type": "1", "email": email, "password": password,
-                "code": otp, "email_logic_type": "2"}
-        # 注意：不传 email_ticket，传了反而报 error_code 10
+    def step3_register(self, email: str, password: str, otp: str):  # 注意：不传 email_ticket，传了反而报 error_code 10
+        self.log(f"提交注册... otp={otp}")
 
         r = self.ex.post(f"{BASE_URL}/passport/web/email/register_verify_login/",
                          params=self._params(),

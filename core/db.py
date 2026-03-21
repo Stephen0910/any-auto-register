@@ -1,8 +1,12 @@
 """数据库模型 - SQLite via SQLModel"""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import Field, SQLModel, create_engine, Session, select
 import json
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 DATABASE_URL = "sqlite:///account_manager.db"
 engine = create_engine(DATABASE_URL)
@@ -22,8 +26,8 @@ class AccountModel(SQLModel, table=True):
     trial_end_time: int = 0
     cashier_url: str = ""
     extra_json: str = "{}"   # JSON 存储平台自定义字段
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
     def get_extra(self) -> dict:
         return json.loads(self.extra_json or "{}")
@@ -41,7 +45,7 @@ class TaskLog(SQLModel, table=True):
     status: str        # success | failed
     error: str = ""
     detail_json: str = "{}"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class ProxyModel(SQLModel, table=True):
@@ -57,8 +61,26 @@ class ProxyModel(SQLModel, table=True):
 
 
 def save_account(account) -> 'AccountModel':
-    """从 base_platform.Account 存入数据库"""
+    """从 base_platform.Account 存入数据库（同平台同邮箱则更新）"""
     with Session(engine) as session:
+        existing = session.exec(
+            select(AccountModel)
+            .where(AccountModel.platform == account.platform)
+            .where(AccountModel.email == account.email)
+        ).first()
+        if existing:
+            existing.password = account.password
+            existing.user_id = account.user_id or ""
+            existing.region = account.region or ""
+            existing.token = account.token or ""
+            existing.status = account.status.value
+            existing.extra_json = json.dumps(account.extra or {}, ensure_ascii=False)
+            existing.cashier_url = (account.extra or {}).get("cashier_url", "")
+            existing.updated_at = _utcnow()
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return existing
         m = AccountModel(
             platform=account.platform,
             email=account.email,

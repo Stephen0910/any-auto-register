@@ -9,20 +9,15 @@ import TaskHistory from '@/pages/TaskHistory'
 import { LayoutDashboard, Users, Globe, History,
          Settings as SettingsIcon, Sun, Moon, ChevronDown, ChevronRight } from 'lucide-react'
 
-const PLATFORMS = [
-  { key: 'trae',    label: 'Trae.ai'  },
-  { key: 'tavily',  label: 'Tavily'   },
-  { key: 'cursor',  label: 'Cursor'   },
-  { key: 'kiro',    label: 'Kiro'     },
-  { key: 'chatgpt',       label: 'ChatGPT'       },
-  { key: 'openblocklabs', label: 'OpenBlockLabs' },
-]
-
 function AccountsSubNav() {
   const location = useLocation()
   const isAccounts = location.pathname.startsWith('/accounts')
   const [open, setOpen] = useState(isAccounts)
+  const [platforms, setPlatforms] = useState<{ key: string; label: string }[]>([])
   useEffect(() => { if (isAccounts) setOpen(true) }, [isAccounts])
+  useEffect(() => {
+    fetch('/api/platforms').then(r => r.json()).then(d => setPlatforms((d || []).map((p: any) => ({ key: p.name, label: p.display_name }))))
+  }, [])
 
   return (
     <div>
@@ -48,7 +43,7 @@ function AccountsSubNav() {
       </NavLink>
       {open && (
         <div style={{ marginLeft: '1.1rem', paddingLeft: '0.9rem', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '0.1rem', marginTop: '0.2rem', marginBottom: '0.2rem' }}>
-          {PLATFORMS.map(p => (
+          {platforms.map(p => (
             <NavLink key={p.key} to={`/accounts/${p.key}`}
               style={({ isActive }) => ({
                 display: 'block', padding: '0.3rem 0.5rem',

@@ -18,8 +18,9 @@ class BaseMailbox(ABC):
 
     @abstractmethod
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
-        """等待并返回6位验证码"""
+                      timeout: int = 120, before_ids: set = None,
+                      code_pattern: str = None) -> str:
+        """等待并返回验证码，code_pattern 为自定义正则（默认匹配6位数字）"""
         ...
 
     @abstractmethod
@@ -71,14 +72,14 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
             proxy=proxy,
         )
     else:  # laoudo
-        return LaoудоMailbox(
+        return LaoudoMailbox(
             auth_token=extra.get("laoudo_auth", ""),
             email=extra.get("laoudo_email", ""),
             account_id=extra.get("laoudo_account_id", ""),
         )
 
 
-class LaoудоMailbox(BaseMailbox):
+class LaoudoMailbox(BaseMailbox):
     """laoudo.com 邮箱服务"""
     def __init__(self, auth_token: str, email: str, account_id: str):
         self.auth = auth_token
@@ -108,7 +109,7 @@ class LaoудоMailbox(BaseMailbox):
         return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "trae",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time
         from curl_cffi import requests as curl_requests
         seen = set(before_ids) if before_ids else set()
@@ -133,7 +134,7 @@ class LaoудоMailbox(BaseMailbox):
                                 str(mail.get("content") or mail.get("html") or ""))
                         if keyword and keyword.lower() not in text.lower():
                             continue
-                        m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
+                        m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                         if m:
                             return m.group(1)
             except Exception:
@@ -161,7 +162,7 @@ class AitreMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "trae",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time, requests
         seen = set(before_ids) if before_ids else set()
         last_check = None
@@ -184,7 +185,7 @@ class AitreMailbox(BaseMailbox):
                         text = mail.get("preview", "") + mail.get("content", "")
                         if keyword and keyword.lower() not in text.lower():
                             continue
-                        m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
+                        m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                         if m:
                             return m.group(1)
             except Exception:
@@ -223,7 +224,7 @@ class TempMailLolMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time, requests
         seen = set(before_ids or [])
         start = time.time()
@@ -240,13 +241,13 @@ class TempMailLolMailbox(BaseMailbox):
                     text = mail.get("subject", "") + " " + mail.get("body", "") + " " + mail.get("html", "")
                     if keyword and keyword.lower() not in text.lower():
                         continue
-                    m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
+                    m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                     if m:
                         return m.group(1)
             except Exception:
                 pass
             time.sleep(3)
-        return ""
+        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
 
 class DuckMailMailbox(BaseMailbox):
@@ -301,7 +302,7 @@ class DuckMailMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time, requests
         seen = set(before_ids or [])
         start = time.time()
@@ -332,7 +333,7 @@ class DuckMailMailbox(BaseMailbox):
             except Exception:
                 pass
             time.sleep(3)
-        return ""
+        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
 
 class CFWorkerMailbox(BaseMailbox):
@@ -390,7 +391,7 @@ class CFWorkerMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time
         seen = set(before_ids or [])
         start = time.time()
@@ -414,13 +415,13 @@ class CFWorkerMailbox(BaseMailbox):
                     # 排除时间戳模式 m=+XXXXXX. 和 t=XXXXXXXXXX
                     search_text = re.sub(r'm=\+\d+\.\d+', '', search_text)
                     search_text = re.sub(r'\bt=\d+\b', '', search_text)
-                    m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', search_text)
+                    m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', search_text)
                     if m:
                         return m.group(1)
             except Exception:
                 pass
             time.sleep(3)
-        return ""
+        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
 
 class MoeMailMailbox(BaseMailbox):
@@ -499,10 +500,12 @@ class MoeMailMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None,
+                      code_pattern: str = None) -> str:
         import re, time
         seen = set(before_ids or [])
         start = time.time()
+        pattern = re.compile(code_pattern) if code_pattern else None
         while time.time() - start < timeout:
             try:
                 r = self._session.get(f"{self.api}/api/emails/{account.account_id}",
@@ -514,12 +517,15 @@ class MoeMailMailbox(BaseMailbox):
                     seen.add(mid)
                     body = str(msg.get("content") or msg.get("text") or msg.get("body") or msg.get("html") or "") + " " + str(msg.get("subject") or "")
                     body = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', body)
-                    m = re.search(r'(?<!#)(?<!\d)(\d{6})(?!\d)', body)
-                    if m: return m.group(1)
+                    if pattern:
+                        m = pattern.search(body)
+                    else:
+                        m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', body)
+                    if m: return m.group(0) if code_pattern else m.group(1)
             except Exception:
                 pass
             time.sleep(3)
-        return ""
+        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
 
 class FreemailMailbox(BaseMailbox):
@@ -573,7 +579,7 @@ class FreemailMailbox(BaseMailbox):
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
+                      timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time
         seen = set(before_ids or [])
         start = time.time()
@@ -762,4 +768,5 @@ class AutoTempMailMailbox(BaseMailbox):
                 pass
             time.sleep(3)
         return ""
+
 

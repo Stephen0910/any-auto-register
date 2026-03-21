@@ -46,7 +46,7 @@ class ChatGPTPlatform(BasePlatform):
             _mailbox = self.mailbox
             _mail_acct = mail_acct
 
-            class LaoудоEmailService:
+            class LaoudoEmailService:
                 service_type = type('ST', (), {'value': 'laoudo'})()
                 def create_email(self, config=None):
                     return {'email': _mail_acct.email, 'service_id': _mail_acct.account_id, 'token': ''}
@@ -57,7 +57,7 @@ class ChatGPTPlatform(BasePlatform):
                 def status(self): return None
 
             engine = RegistrationEngine(
-                email_service=LaoудоEmailService(),
+                email_service=LaoudoEmailService(),
                 proxy_url=proxy, callback_logger=log_fn)
             engine.email = email
             engine.password = password

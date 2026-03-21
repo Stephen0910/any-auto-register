@@ -60,10 +60,16 @@ class PlaywrightExecutor(BaseExecutor):
     def get_cookies(self) -> dict:
         return {c["name"]: c["value"] for c in self._context.cookies()}
 
-    def set_cookies(self, cookies: dict) -> None:
-        self._context.add_cookies([
-            {"name": k, "value": v, "url": "https://"} for k, v in cookies.items()
-        ])
+    def set_cookies(self, cookies: dict, domain: str = ".example.com") -> None:
+        page_url = self._page.url if self._page else None
+        if page_url and page_url.startswith("http"):
+            self._context.add_cookies([
+                {"name": k, "value": v, "url": page_url} for k, v in cookies.items()
+            ])
+        else:
+            self._context.add_cookies([
+                {"name": k, "value": v, "domain": domain, "path": "/"} for k, v in cookies.items()
+            ])
 
     def close(self) -> None:
         if self._browser:

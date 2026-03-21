@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, API_BASE } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -10,14 +10,6 @@ const STATUS_VARIANT: Record<string, any> = {
   registered: 'default', trial: 'success', subscribed: 'success',
   expired: 'warning', invalid: 'danger',
 }
-const PLATFORMS = [
-  { key: 'trae',          label: 'Trae.ai'       },
-  { key: 'tavily',        label: 'Tavily'        },
-  { key: 'cursor',        label: 'Cursor'        },
-  { key: 'kiro',          label: 'Kiro'          },
-  { key: 'chatgpt',       label: 'ChatGPT'       },
-  { key: 'openblocklabs', label: 'OpenBlockLabs' },
-]
 
 // ── SSE 日志面板 ──────────────────────────────────────────
 function LogPanel({ taskId, onDone }: { taskId: string; onDone: () => void }) {
@@ -101,7 +93,7 @@ function RegisterModal({ platform, onClose, onDone }: { platform: string; onClos
       <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl w-full max-w-lg shadow-2xl flex flex-col"
            onClick={e => e.stopPropagation()} style={{maxHeight: '80vh'}}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">注册 {PLATFORMS.find(p=>p.key===platform)?.label}</h2>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">注册 {platform}</h2>
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="px-6 py-4 flex-1 overflow-y-auto flex flex-col gap-4">
@@ -355,17 +347,23 @@ export default function Accounts() {
   const [tab, setTab] = useState(platform || 'trae')
   useEffect(() => { if (platform) { setTab(platform) } }, [platform])
 
-  const [accounts, setAccounts] = useState<any[]>([])
+const [accounts, setAccounts] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [detail, setDetail] = useState<any | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showRegister, setShowRegister] = useState(false)
 
-  const load = async (p = tab, s = search, fs = filterStatus) => {
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 400)
+    return () => clearTimeout(timer)
+  }, [search])
+
+  const load = useCallback(async (p = tab, s = debouncedSearch, fs = filterStatus) => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ platform: p, page: '1', page_size: '100' })
@@ -374,9 +372,9 @@ export default function Accounts() {
       const data = await apiFetch(`/accounts?${params}`)
       setAccounts(data.items); setTotal(data.total)
     } finally { setLoading(false) }
-  }
+  }, [tab, debouncedSearch, filterStatus])
 
-  useEffect(() => { load(tab, search, filterStatus) }, [tab, search, filterStatus])
+  useEffect(() => { load(tab, debouncedSearch, filterStatus) }, [tab, debouncedSearch, filterStatus])
 
   const exportCsv = () => {
     const header = 'email,password,status,region,cashier_url,created_at'

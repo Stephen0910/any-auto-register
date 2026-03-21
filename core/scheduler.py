@@ -44,7 +44,7 @@ class Scheduler:
             for acc in accounts:
                 if acc.trial_end_time and acc.trial_end_time < now:
                     acc.status = AccountStatus.EXPIRED.value
-                    acc.updated_at = datetime.utcnow()
+                    acc.updated_at = datetime.now(timezone.utc)
                     s.add(acc)
                     updated += 1
             s.commit()
@@ -82,7 +82,7 @@ class Scheduler:
                     a = s.get(AccountModel, acc.id)
                     if a:
                         a.status = acc.status if valid else AccountStatus.INVALID.value
-                        a.updated_at = datetime.utcnow()
+                        a.updated_at = datetime.now(timezone.utc)
                         s.add(a)
                         s.commit()
                 if valid:

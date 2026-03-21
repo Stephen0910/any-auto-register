@@ -1,15 +1,33 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from typing import Optional
 from core.db import TaskLog, engine
-import time, json, asyncio
+import time, json, asyncio, threading
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-# 内存任务状态
 _tasks: dict = {}
+_tasks_lock = threading.Lock()
+
+MAX_FINISHED_TASKS = 200
+CLEANUP_THRESHOLD = 250
+
+
+def _cleanup_old_tasks():
+    """Remove oldest finished tasks when the dict grows too large."""
+    with _tasks_lock:
+        finished = [
+            (tid, t) for tid, t in _tasks.items()
+            if t.get("status") in ("done", "failed")
+        ]
+        if len(finished) <= MAX_FINISHED_TASKS:
+            return
+        finished.sort(key=lambda x: x[0])
+        to_remove = finished[: len(finished) - MAX_FINISHED_TASKS]
+        for tid, _ in to_remove:
+            del _tasks[tid]
 
 
 class RegisterTaskRequest(BaseModel):
@@ -21,16 +39,32 @@ class RegisterTaskRequest(BaseModel):
     proxy: Optional[str] = None
     executor_type: str = "protocol"
     captcha_solver: str = "yescaptcha"
-    extra: dict = {}
+    extra: dict = Field(default_factory=dict)
 
 
 def _log(task_id: str, msg: str):
     """向任务追加一条日志"""
     ts = time.strftime("%H:%M:%S")
     entry = f"[{ts}] {msg}"
-    if task_id in _tasks:
-        _tasks[task_id].setdefault("logs", []).append(entry)
+    with _tasks_lock:
+        if task_id in _tasks:
+            _tasks[task_id].setdefault("logs", []).append(entry)
     print(entry)
+
+
+def _save_task_log(platform: str, email: str, status: str,
+                   error: str = "", detail: dict = None):
+    """Write a TaskLog record to the database."""
+    with Session(engine) as s:
+        log = TaskLog(
+            platform=platform,
+            email=email,
+            status=status,
+            error=error,
+            detail_json=json.dumps(detail or {}, ensure_ascii=False),
+        )
+        s.add(log)
+        s.commit()
 
 
 def _auto_upload_cpa(task_id: str, account):
@@ -64,7 +98,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
     from core.db import save_account
     from core.base_mailbox import create_mailbox
 
-    _tasks[task_id]["status"] = "running"
+    with _tasks_lock:
+        _tasks[task_id]["status"] = "running"
     success = 0
     errors = []
 
@@ -83,7 +118,6 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
         )
         def _do_one(i: int):
             from core.proxy_pool import proxy_pool
-            # 若未指定代理，从代理池取
             _proxy = req.proxy
             if not _proxy:
                 _proxy = proxy_pool.get_next()
@@ -93,12 +127,12 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 proxy=_proxy,
                 extra=req.extra,
             )
-            # 每个线程独立创建 platform 实例（避免共享状态）
             _mailbox = mailbox.__class__(**mailbox.__dict__) if req.concurrency > 1 else mailbox
             _platform = PlatformCls(config=_config, mailbox=_mailbox)
             _platform._log_fn = lambda msg: _log(task_id, msg)
             try:
-                _tasks[task_id]["progress"] = f"{i+1}/{req.count}"
+                with _tasks_lock:
+                    _tasks[task_id]["progress"] = f"{i+1}/{req.count}"
                 _log(task_id, f"开始注册第 {i+1}/{req.count} 个账号")
                 if _proxy: _log(task_id, f"使用代理: {_proxy}")
                 account = _platform.register(
@@ -108,16 +142,18 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 save_account(account)
                 if _proxy: proxy_pool.report_success(_proxy)
                 _log(task_id, f"✓ 注册成功: {account.email}")
+                _save_task_log(req.platform, account.email, "success")
                 _auto_upload_cpa(task_id, account)
-                # 若有 cashier_url，打印并记录到任务结果
                 cashier_url = (account.extra or {}).get("cashier_url", "")
                 if cashier_url:
                     _log(task_id, f"  [升级链接] {cashier_url}")
-                    _tasks[task_id].setdefault("cashier_urls", []).append(cashier_url)
+                    with _tasks_lock:
+                        _tasks[task_id].setdefault("cashier_urls", []).append(cashier_url)
                 return True
             except Exception as e:
                 if _proxy: proxy_pool.report_fail(_proxy)
                 _log(task_id, f"✗ 注册失败: {e}")
+                _save_task_log(req.platform, req.email or "", "failed", error=str(e))
                 return str(e)
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -132,14 +168,17 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                     errors.append(result)
     except Exception as e:
         _log(task_id, f"致命错误: {e}")
-        _tasks[task_id]["status"] = "failed"
-        _tasks[task_id]["error"] = str(e)
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
         return
 
-    _tasks[task_id]["status"] = "done"
-    _tasks[task_id]["success"] = success
-    _tasks[task_id]["errors"] = errors
+    with _tasks_lock:
+        _tasks[task_id]["status"] = "done"
+        _tasks[task_id]["success"] = success
+        _tasks[task_id]["errors"] = errors
     _log(task_id, f"完成: 成功 {success} 个, 失败 {len(errors)} 个")
+    _cleanup_old_tasks()
 
 
 @router.post("/register")
@@ -148,26 +187,41 @@ def create_register_task(
     background_tasks: BackgroundTasks,
 ):
     task_id = f"task_{int(time.time()*1000)}"
-    _tasks[task_id] = {"id": task_id, "status": "pending",
-                       "progress": f"0/{req.count}", "logs": []}
+    with _tasks_lock:
+        _tasks[task_id] = {"id": task_id, "status": "pending",
+                           "progress": f"0/{req.count}", "logs": []}
     background_tasks.add_task(_run_register, task_id, req)
     return {"task_id": task_id}
+
+
+@router.get("/logs")
+def get_logs(platform: str = None, page: int = 1, page_size: int = 50):
+    with Session(engine) as s:
+        q = select(TaskLog)
+        if platform:
+            q = q.where(TaskLog.platform == platform)
+        q = q.order_by(TaskLog.id.desc())
+        total = len(s.exec(q).all())
+        items = s.exec(q.offset((page - 1) * page_size).limit(page_size)).all()
+    return {"total": total, "items": items}
 
 
 @router.get("/{task_id}/logs/stream")
 async def stream_logs(task_id: str, since: int = 0):
     """SSE 实时日志流"""
-    if task_id not in _tasks:
-        raise HTTPException(404, "任务不存在")
+    with _tasks_lock:
+        if task_id not in _tasks:
+            raise HTTPException(404, "任务不存在")
 
     async def event_generator():
         sent = since
         while True:
-            logs = _tasks.get(task_id, {}).get("logs", [])
+            with _tasks_lock:
+                logs = list(_tasks.get(task_id, {}).get("logs", []))
+                status = _tasks.get(task_id, {}).get("status", "")
             while sent < len(logs):
                 yield f"data: {json.dumps({'line': logs[sent]})}\n\n"
                 sent += 1
-            status = _tasks.get(task_id, {}).get("status", "")
             if status in ("done", "failed"):
                 yield f"data: {json.dumps({'done': True, 'status': status})}\n\n"
                 break
@@ -183,25 +237,15 @@ async def stream_logs(task_id: str, since: int = 0):
     )
 
 
-@router.get("/logs")
-def get_logs(platform: str = None, page: int = 1, page_size: int = 50):
-    with Session(engine) as s:
-        q = select(TaskLog)
-        if platform:
-            q = q.where(TaskLog.platform == platform)
-        q = q.order_by(TaskLog.id.desc())
-        total = len(s.exec(q).all())
-        items = s.exec(q.offset((page - 1) * page_size).limit(page_size)).all()
-    return {"total": total, "items": items}
-
-
 @router.get("/{task_id}")
 def get_task(task_id: str):
-    if task_id not in _tasks:
-        raise HTTPException(404, "任务不存在")
-    return _tasks[task_id]
+    with _tasks_lock:
+        if task_id not in _tasks:
+            raise HTTPException(404, "任务不存在")
+        return _tasks[task_id]
 
 
 @router.get("")
 def list_tasks():
-    return list(_tasks.values())
+    with _tasks_lock:
+        return list(_tasks.values())

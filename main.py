@@ -1,5 +1,6 @@
 """account_manager - 多平台账号管理后台"""
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -13,7 +14,26 @@ from api.proxies import router as proxies_router
 from api.config import router as config_router
 from api.actions import router as actions_router
 
-app = FastAPI(title="Account Manager", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    load_all()
+    print("[OK] 数据库初始化完成")
+    from core.registry import list_platforms
+    print(f"[OK] 已加载平台: {[p['name'] for p in list_platforms()]}")
+    from core.scheduler import scheduler
+    scheduler.start()
+    from services.solver_manager import start_async
+    start_async()
+    yield
+    from core.scheduler import scheduler as _scheduler
+    _scheduler.stop()
+    from services.solver_manager import stop
+    stop()
+
+
+app = FastAPI(title="Account Manager", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,27 +59,6 @@ if os.path.exists(_dist):
     async def serve_spa(full_path: str = ""):
         index = os.path.join(_dist, "index.html")
         return FileResponse(index)
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
-    load_all()
-    print("[OK] 数据库初始化完成")
-    from core.registry import list_platforms
-    print(f"[OK] 已加载平台: {[p['name'] for p in list_platforms()]}")
-    from core.scheduler import scheduler
-    scheduler.start()
-    from services.solver_manager import start_async
-    start_async()
-
-
-@app.on_event("shutdown")
-def on_shutdown():
-    from core.scheduler import scheduler
-    scheduler.stop()
-    from services.solver_manager import stop
-    stop()
 
 
 @app.get("/api/solver/status")

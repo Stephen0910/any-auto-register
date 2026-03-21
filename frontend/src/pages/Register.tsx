@@ -111,7 +111,7 @@ export default function Register() {
       <Card>
         <CardHeader><CardTitle>基本配置</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <Select label="平台" k="platform" options={[['trae','Trae.ai'],['tavily','Tavily'],['cursor','Cursor'],['kiro','Kiro']]} />
+          <Select label="平台" k="platform" options={[['trae','Trae.ai'],['tavily','Tavily'],['cursor','Cursor'],['kiro','Kiro'],['grok','Grok']]} />
           <Select label="执行器" k="executor_type" options={[['protocol','纯协议'],['headless','无头浏览器'],['headed','有头浏览器']]} />
           <Select label="验证码" k="captcha_solver" options={[['yescaptcha','YesCaptcha'],['local_solver','本地Solver(Camoufox)'],['manual','手动']]} />
           <div className="grid grid-cols-2 gap-4">

@@ -2,12 +2,17 @@
 from typing import Optional
 from sqlmodel import Session, select
 from .db import ProxyModel, engine
-import time
+import time, threading, random
+from datetime import datetime, timezone
 
 
 class ProxyPool:
+    def __init__(self):
+        self._index = 0
+        self._lock = threading.Lock()
+
     def get_next(self, region: str = "") -> Optional[str]:
-        """按成功率轮询取一个可用代理"""
+        """加权轮询取一个可用代理，在高成功率代理间轮换"""
         with Session(engine) as s:
             q = select(ProxyModel).where(ProxyModel.is_active == True)
             if region:
@@ -15,19 +20,21 @@ class ProxyPool:
             proxies = s.exec(q).all()
             if not proxies:
                 return None
-            # 按成功率排序，优先高成功率
             proxies.sort(
                 key=lambda p: p.success_count / max(p.success_count + p.fail_count, 1),
                 reverse=True
             )
-            return proxies[0].url
+            with self._lock:
+                idx = self._index % len(proxies)
+                self._index += 1
+            return proxies[idx].url
 
     def report_success(self, url: str) -> None:
         with Session(engine) as s:
             p = s.exec(select(ProxyModel).where(ProxyModel.url == url)).first()
             if p:
                 p.success_count += 1
-                p.last_checked = __import__('datetime').datetime.utcnow()
+                p.last_checked = datetime.now(timezone.utc)
                 s.add(p)
                 s.commit()
 
@@ -36,7 +43,7 @@ class ProxyPool:
             p = s.exec(select(ProxyModel).where(ProxyModel.url == url)).first()
             if p:
                 p.fail_count += 1
-                p.last_checked = __import__('datetime').datetime.utcnow()
+                p.last_checked = datetime.now(timezone.utc)
                 # 连续失败超过10次自动禁用
                 if p.fail_count > 0 and p.success_count == 0 and p.fail_count >= 5:
                     p.is_active = False

@@ -33,8 +33,8 @@ electron/backend/
 
 # PyInstaller
 backend.spec
-build/
 static/
+/build/
 
 # Docker 数据
 data/
