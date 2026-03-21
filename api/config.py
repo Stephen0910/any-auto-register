@@ -13,6 +13,7 @@ CONFIG_KEYS = [
     "moemail_api_url",
     "mail_provider",
     "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
+    "autotempmail_api_url", "autotempmail_admin_token", "autotempmail_domain",
     "cpa_api_url", "cpa_api_key",
     "team_manager_url", "team_manager_key",
 ]

@@ -37,9 +37,9 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
         return MailTmMailbox(proxy=proxy)
     elif provider == "duckmail":
         return DuckMailMailbox(
-            api_url=extra.get("duckmail_api_url", "https://www.duckmail.sbs"),
-            provider_url=extra.get("duckmail_provider_url", "https://api.duckmail.sbs"),
-            bearer=extra.get("duckmail_bearer", "kevin273945"),
+            api_url=extra.get("duckmail_api_url") or "https://www.duckmail.sbs",
+            provider_url=extra.get("duckmail_provider_url") or "https://api.duckmail.sbs",
+            bearer=extra.get("duckmail_bearer") or "kevin273945",
             proxy=proxy,
         )
     elif provider == "freemail":
@@ -61,6 +61,13 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
             admin_token=extra.get("cfworker_admin_token", ""),
             domain=extra.get("cfworker_domain", ""),
             fingerprint=extra.get("cfworker_fingerprint", ""),
+            proxy=proxy,
+        )
+    elif provider == "autotempmail":
+        return AutoTempMailMailbox(
+            api_url=extra.get("autotempmail_api_url", ""),
+            admin_token=extra.get("autotempmail_admin_token", ""),
+            domain=extra.get("autotempmail_domain", ""),
             proxy=proxy,
         )
     else:  # laoudo
@@ -657,3 +664,102 @@ class MailTmMailbox(BaseMailbox):
                 pass
             time.sleep(3)
         return ""
+
+
+
+class AutoTempMailMailbox(BaseMailbox):
+    """AutoTempMail 自建临时邮箱服务（基于 Cloudflare Email Routing）
+
+    部署文档：https://github.com/autotempmail/autotempmail
+    API 接口：
+      POST /api/inboxes/random  -> 生成随机邮箱
+      GET  /api/inboxes/{addr}/otp -> 获取最新 OTP
+    """
+
+    def __init__(self, api_url: str, admin_token: str = "",
+                 domain: str = "", proxy: str = None):
+        self.api = api_url.rstrip("/")
+        self.admin_token = admin_token
+        self.domain = domain
+        self.proxy = {"http": proxy, "https": proxy} if proxy else None
+
+    def _headers(self) -> dict:
+        h = {
+            "accept": "application/json",
+            "content-type": "application/json",
+        }
+        if self.admin_token:
+            h["x-admin-auth"] = self.admin_token
+        return h
+
+    def get_email(self) -> MailboxAccount:
+        import requests
+        payload = {}
+        if self.domain:
+            payload["domain"] = self.domain
+        r = requests.post(
+            f"{self.api}/api/inboxes/random",
+            json=payload,
+            headers=self._headers(),
+            proxies=self.proxy,
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        address = data.get("address", "")
+        print(f"[AutoTempMail] 生成邮箱: {address}")
+        return MailboxAccount(email=address, account_id=address)
+
+    def get_current_ids(self, account: MailboxAccount) -> set:
+        import requests
+        try:
+            r = requests.get(
+                f"{self.api}/api/inboxes/{account.email}/messages",
+                headers=self._headers(),
+                proxies=self.proxy,
+                timeout=10,
+            )
+            data = r.json()
+            return {str(m.get("id", "")) for m in data.get("items", [])}
+        except Exception:
+            return set()
+
+    def wait_for_code(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import re
+        import time
+        import requests
+
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                # 优先用 /otp 接口，直接返回解析好的验证码
+                r = requests.get(
+                    f"{self.api}/api/inboxes/{account.email}/otp",
+                    headers=self._headers(),
+                    proxies=self.proxy,
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    msg = data.get("message", {})
+                    mid = str(msg.get("id", ""))
+                    if mid and mid not in seen:
+                        seen.add(mid)
+                        otp_info = data.get("otp", {})
+                        if otp_info.get("found"):
+                            code = otp_info.get("primary", "")
+                            if code:
+                                print(f"[AutoTempMail] 获取到验证码: {code}")
+                                return code
+                        # fallback：自己从 text_body/subject 里提取
+                        text = msg.get("text_body", "") + " " + msg.get("subject", "")
+                        m = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+                        if m:
+                            return m.group(1)
+            except Exception:
+                pass
+            time.sleep(3)
+        return ""
+
