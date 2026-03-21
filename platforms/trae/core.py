@@ -110,7 +110,7 @@ class TraeRegister:
         if not otp:
             raise RuntimeError("未获取到验证码")
         self.log(f"验证码: {otp}")
-        user_id = self.step3_register(email, password, otp, email_ticket)
+        user_id = self.step3_register(email, password, otp)
         self.step4_trae_login()
         token = self.step5_get_token()
         result = self.step6_check_login()
