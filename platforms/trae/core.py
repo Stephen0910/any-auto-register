@@ -64,8 +64,7 @@ class TraeRegister:
         self.log("提交注册...")
         data = {"type": "1", "email": email, "password": password,
                 "code": otp, "email_logic_type": "2"}
-        if email_ticket:
-            data["email_ticket"] = email_ticket
+        # 注意：不传 email_ticket，传了反而报 error_code 10
 
         r = self.ex.post(f"{BASE_URL}/passport/web/email/register_verify_login/",
                          params=self._params(),
