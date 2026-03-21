@@ -393,7 +393,11 @@ class CFWorkerMailbox(BaseMailbox):
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
         import re, time
-        seen = set(before_ids or [])
+        # before_ids: step1 之前已存在的邮件 id，用于过滤旧邮件
+        # 但第一轮也扫 before_ids 里的邮件，因为发送极快时邮件可能在快照后立即到达
+        _before_ids = set(before_ids or [])
+        seen = set()  # 已处理过的 id（跨轮次去重）
+        first_round = True
         start = time.time()
         while time.time() - start < timeout:
             try:
@@ -401,6 +405,9 @@ class CFWorkerMailbox(BaseMailbox):
                 for mail in sorted(mails, key=lambda x: x.get("id", 0), reverse=True):
                     mid = str(mail.get("id", ""))
                     if not mid or mid in seen:
+                        continue
+                    # 非第一轮跳过 before_ids 里的旧邮件
+                    if not first_round and mid in _before_ids:
                         continue
                     seen.add(mid)
                     raw = str(mail.get("raw", ""))
@@ -420,6 +427,7 @@ class CFWorkerMailbox(BaseMailbox):
                         return m.group(1)
             except Exception:
                 pass
+            first_round = False
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
