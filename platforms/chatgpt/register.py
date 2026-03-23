@@ -509,8 +509,8 @@ class RegistrationEngine:
                     self._log("授权 Cookie 格式错误", "error")
                     return None
 
-                # 解码第一个 segment
-                payload = segments[0]
+                # 解码第二个 segment（payload）
+                payload = segments[1]
                 pad = "=" * ((4 - (len(payload) % 4)) % 4)
                 decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
                 auth_json = json_module.loads(decoded.decode("utf-8"))
