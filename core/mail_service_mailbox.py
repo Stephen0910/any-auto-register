@@ -53,7 +53,7 @@ class MailServiceMailbox:
 
     def __init__(
         self,
-        provider: str | list = "moemail",
+        provider: str | list = "all",
         base_url: str = None,
         timeout_per_req: int = 15,
     ):

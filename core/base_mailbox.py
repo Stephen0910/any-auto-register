@@ -32,7 +32,13 @@ class BaseMailbox(ABC):
 def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'BaseMailbox':
     """工厂方法：根据 provider 创建对应的 mailbox 实例"""
     extra = extra or {}
-    if provider == "tempmail_lol":
+    if provider == "mail_service":
+        from core.mail_service_mailbox import MailServiceMailbox
+        return MailServiceMailbox(
+            provider=extra.get("mail_service_provider", "all"),
+            base_url=extra.get("mail_service_url", "http://10.10.10.8:5500"),
+        )
+    elif provider == "tempmail_lol":
         return TempMailLolMailbox(proxy=proxy)
     elif provider == "mailtm":
         return MailTmMailbox(proxy=proxy)
@@ -381,7 +387,9 @@ class CFWorkerMailbox(BaseMailbox):
             params={"limit": 20, "offset": 0, "address": email},
             headers=self._headers(), proxies=self.proxy, timeout=10)
         data = r.json()
-        return data.get("results", data) if isinstance(data, dict) else data
+        results = data.get("results", data) if isinstance(data, dict) else data
+        print(f"[CFWorker._get_mails] email={email} count={len(results)} ids={[m.get('id') for m in results]}")
+        return results
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         try:
@@ -398,6 +406,7 @@ class CFWorkerMailbox(BaseMailbox):
         _before_ids = set(before_ids or [])
         seen = set()  # 已处理过的 id（跨轮次去重）
         first_round = True
+        print(f"[CFWorker.wait_for_code] email={account.email} before_ids={_before_ids} pattern={code_pattern}")
         start = time.time()
         while time.time() - start < timeout:
             try:
@@ -424,9 +433,11 @@ class CFWorkerMailbox(BaseMailbox):
                     search_text = re.sub(r'\bt=\d+\b', '', search_text)
                     m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', search_text)
                     if m:
-                        return m.group(1)
-            except Exception:
-                pass
+                        return m.group(1) if m.lastindex else m.group(0)
+            except Exception as e:
+                import traceback
+                print(f"[CFWorker.wait_for_code] exception: {e}")
+                traceback.print_exc()
             first_round = False
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
