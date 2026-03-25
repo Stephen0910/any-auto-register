@@ -40,14 +40,14 @@ def upload_account(body: CpaUploadRequest):
     """将数据库中已注册的 Kiro 账号上传到 CPA"""
     from sqlmodel import Session, select
     from core.db import AccountModel, AccountCredentialModel, engine
-    from platforms.kiro.cpa_upload import generate_token_json, upload_to_cpa
+    from platforms.kiro.cpa_upload import upload_to_cpa
+    from datetime import datetime, timezone, timedelta
 
     with Session(engine) as s:
         acc = s.get(AccountModel, body.account_id)
         if not acc or acc.platform != "kiro":
             raise HTTPException(404, "Kiro 账号不存在")
 
-        # 从 credentials 表读取 token 字段
         creds = s.exec(
             select(AccountCredentialModel).where(
                 AccountCredentialModel.account_id == body.account_id,
@@ -56,25 +56,24 @@ def upload_account(body: CpaUploadRequest):
         ).all()
         cred_map = {c.key: c.value for c in creds}
 
-        # 也兜底读 extra_json（旧数据）
-        import json
-        extra = json.loads(acc.extra_json or "{}")
+    now = datetime.now(tz=timezone(timedelta(hours=8)))
+    expires_at = datetime.now(tz=timezone(timedelta(hours=8))) + timedelta(hours=1)
 
-        token_data = {
-            "type": "kiro",
-            "email": acc.email,
-            "access_token": cred_map.get("accessToken") or extra.get("accessToken") or extra.get("access_token") or "",
-            "refresh_token": cred_map.get("refreshToken") or extra.get("refreshToken") or extra.get("refresh_token") or "",
-            "client_id": cred_map.get("clientId") or extra.get("clientId") or extra.get("client_id") or "",
-            "client_secret": cred_map.get("clientSecret") or extra.get("clientSecret") or extra.get("client_secret") or "",
-            "auth_method": "builder-id",
-            "provider": "AWS",
-            "region": "us-east-1",
-            "start_url": "https://view.awsapps.com/start",
-            "profile_arn": "",
-            "expires_at": "",
-            "last_refresh": "",
-        }
+    token_data = {
+        "type": "kiro",
+        "email": acc.email,
+        "access_token": cred_map.get("accessToken") or cred_map.get("access_token") or "",
+        "refresh_token": cred_map.get("refreshToken") or cred_map.get("refresh_token") or "",
+        "client_id": cred_map.get("clientId") or cred_map.get("client_id") or "",
+        "client_secret": cred_map.get("clientSecret") or cred_map.get("client_secret") or "",
+        "auth_method": "builder-id",
+        "provider": "AWS",
+        "region": "us-east-1",
+        "start_url": "https://view.awsapps.com/start",
+        "profile_arn": "",
+        "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "last_refresh": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+    }
 
     ok, msg = upload_to_cpa(token_data, api_url=body.api_url, api_key=body.api_key, proxy=body.proxy)
     return {"ok": ok, "message": msg, "email": acc.email}
