@@ -82,7 +82,7 @@ def _task_lock(task_id: str) -> threading.Lock:
 
 def _mutate_task(task_id: str, fn: Callable[[TaskModel], None]) -> Optional[TaskModel]:
     with _task_lock(task_id):
-        with Session(engine) as session:
+        with Session(engine, expire_on_commit=False) as session:
             task = session.get(TaskModel, task_id)
             if not task:
                 return None
