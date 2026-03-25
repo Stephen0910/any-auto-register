@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 def ensure_utc_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
