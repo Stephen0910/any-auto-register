@@ -17,6 +17,7 @@ class ConfigRepository:
         "mail_provider",
         "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
         "cpa_api_url", "cpa_api_key",
+        "kiro_cpa_api_url", "kiro_cpa_api_key", "kiro_cpa_auto_upload",
         "team_manager_url", "team_manager_key",
     }
 
