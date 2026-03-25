@@ -750,6 +750,28 @@ function ActionMenu({
         />
       )}
       <button onClick={onDetail} className="table-action-btn">详情</button>
+      {acc.platform === 'kiro' && (
+        <button
+          className="table-action-btn"
+          disabled={running === '__cpa_upload__'}
+          onClick={async () => {
+            setRunning('__cpa_upload__')
+            try {
+              const res = await apiFetch(`/kiro-cpa/upload`, {
+                method: 'POST',
+                body: JSON.stringify({ account_id: acc.id }),
+              })
+              setToast({ type: res.ok ? 'success' : 'error', text: res.message || (res.ok ? '上传成功' : '上传失败') })
+            } catch (e: any) {
+              setToast({ type: 'error', text: e.message || '上传失败' })
+            } finally {
+              setRunning(null)
+            }
+          }}
+        >
+          {running === '__cpa_upload__' ? '上传中...' : '上传CPA'}
+        </button>
+      )}
       {actions.length > 0 && (
         <div className="relative" ref={menuRef}>
           <button onClick={() => setOpen(o => !o)}
