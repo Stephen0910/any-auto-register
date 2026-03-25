@@ -290,7 +290,7 @@ def append_task_event(task_id: str, message: str, *, event_type: str = "log", le
 
 
 def mark_incomplete_tasks_interrupted() -> None:
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         tasks = session.exec(
             select(TaskModel).where(TaskModel.status.in_(list(ACTIVE_TASK_STATUSES)))
         ).all()
