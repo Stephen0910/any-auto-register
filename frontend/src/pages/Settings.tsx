@@ -1228,6 +1228,43 @@ export default function Settings() {
                   {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}
                 </Button>
               )}
+              {activeTab === 'kiro' && (
+                <div className="space-y-2">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={cpaTestLoading}
+                    onClick={async () => {
+                      setCpaTestLoading(true)
+                      setCpaTestResult(null)
+                      try {
+                        const apiUrl = form.kiro_cpa_api_url || form.cpa_api_url || ''
+                        const apiKey = form.kiro_cpa_api_key || form.cpa_api_key || ''
+                        const res = await apiFetch('/kiro-cpa/test', {
+                          method: 'POST',
+                          body: JSON.stringify({ api_url: apiUrl, api_key: apiKey }),
+                        })
+                        setCpaTestResult({ ok: res.ok, message: res.message })
+                      } catch (e: any) {
+                        setCpaTestResult({ ok: false, message: e.message || '请求失败' })
+                      } finally {
+                        setCpaTestLoading(false)
+                      }
+                    }}
+                  >
+                    {cpaTestLoading ? '测试中...' : '测试 CPA 连接'}
+                  </Button>
+                  {cpaTestResult && (
+                    <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${
+                      cpaTestResult.ok
+                        ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                        : 'text-red-400 border-red-500/30 bg-red-500/10'
+                    }`}>
+                      {cpaTestResult.message}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

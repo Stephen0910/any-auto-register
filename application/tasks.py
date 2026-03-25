@@ -453,28 +453,42 @@ class TaskLogger:
 
 
 def _auto_upload_cpa(task_logger: TaskLogger, account) -> None:
-    if getattr(account, "platform", "") != "chatgpt":
+    platform = getattr(account, "platform", "")
+    if platform not in ("chatgpt", "kiro"):
         return
     try:
         from core.config_store import config_store
 
-        cpa_url = config_store.get("cpa_api_url", "")
-        if cpa_url:
-            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
+        if platform == "chatgpt":
+            cpa_url = config_store.get("cpa_api_url", "")
+            if cpa_url:
+                from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
 
-            class _AccountProxy:
-                pass
+                class _AccountProxy:
+                    pass
 
-            target = _AccountProxy()
-            target.email = account.email
-            extra = account.extra or {}
-            target.access_token = extra.get("access_token") or account.token
-            target.refresh_token = extra.get("refresh_token", "")
-            target.id_token = extra.get("id_token", "")
+                target = _AccountProxy()
+                target.email = account.email
+                extra = account.extra or {}
+                target.access_token = extra.get("access_token") or account.token
+                target.refresh_token = extra.get("refresh_token", "")
+                target.id_token = extra.get("id_token", "")
 
-            token_data = generate_token_json(target)
-            ok, msg = upload_to_cpa(token_data)
-            task_logger.log(f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+                token_data = generate_token_json(target)
+                ok, msg = upload_to_cpa(token_data)
+                task_logger.log(f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+
+        elif platform == "kiro":
+            auto_upload = config_store.get("kiro_cpa_auto_upload", "true")
+            if auto_upload.lower() == "false":
+                return
+            cpa_url = config_store.get("kiro_cpa_api_url", "") or config_store.get("cpa_api_url", "")
+            if cpa_url:
+                from platforms.kiro.cpa_upload import generate_token_json, upload_to_cpa
+                token_data = generate_token_json(account)
+                ok, msg = upload_to_cpa(token_data)
+                task_logger.log(f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+
     except Exception as exc:
         task_logger.log(f"  [CPA] 自动上传异常: {exc}", level="warning")
 
