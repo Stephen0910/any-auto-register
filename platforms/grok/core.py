@@ -63,10 +63,12 @@ class GrokRegister:
         return r.content
 
     def _solve_turnstile(self) -> str:
-        from core.base_captcha import YesCaptcha
         self.log("获取 Turnstile token...")
-        token = YesCaptcha(self.key).solve_turnstile(
-            'https://accounts.x.ai/sign-up', TURNSTILE_SITEKEY)
+        solver = self.captcha_solver
+        if not solver:
+            from core.base_captcha import YesCaptcha
+            solver = YesCaptcha(self.key)
+        token = solver.solve_turnstile('https://accounts.x.ai/sign-up', TURNSTILE_SITEKEY)
         self.log(f"  Turnstile: {token[:40]}...")
         return token
 
@@ -124,33 +126,3 @@ class GrokRegister:
             resp = self.s.get(url, headers={'user-agent': UA, 'accept': 'text/html',
                                      'referer': 'https://accounts.x.ai/'},
                        allow_redirects=True)
-            self.log(f"  set-cookie resp status={resp.status_code} cookies={list(dict(resp.cookies).keys())}")
-
-    def register(self, email: str, password: str = None,
-                 otp_callback=None) -> dict:
-        if not password:
-            password = _rand_password()
-        given_name = _rand_name()
-        family_name = _rand_name()
-
-        self.step1_send_otp(email)
-        code = otp_callback() if otp_callback else input('验证码: ')
-        if not code:
-            raise RuntimeError('未获取到验证码')
-
-        self.step2_verify_otp(email, code)
-        signup_body = self.step3_signup(email, password, code, given_name, family_name)
-        self.step4_set_cookies(signup_body)
-
-        cookies = dict(self.s.cookies)
-        sso = cookies.get('sso', '')
-        if sso:
-            self.log(f"  ✅ sso={sso[:40]}...")
-        else:
-            self.log("  ⚠️ 未获取到 sso cookie")
-
-        return {
-            'email': email, 'password': password,
-            'given_name': given_name, 'family_name': family_name,
-            'sso': sso, 'sso_rw': cookies.get('sso-rw', ''),
-        }

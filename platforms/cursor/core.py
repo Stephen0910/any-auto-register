@@ -79,12 +79,11 @@ class CursorRegister:
                     headers=self._base_headers(ACTION_SUBMIT_EMAIL, referer, boundary=bd),
                     data=body, allow_redirects=False)
 
-    def step3_submit_password(self, password, email, state_encoded, yescaptcha_key=""):
+    def step3_submit_password(self, password, email, state_encoded, captcha_solver=None):
         captcha_token = ""
-        if yescaptcha_key:
-            from core.base_captcha import YesCaptcha
+        if captcha_solver:
             self.log("获取 Turnstile token...")
-            captcha_token = YesCaptcha(yescaptcha_key).solve_turnstile(AUTH, TURNSTILE_SITEKEY)
+            captcha_token = captcha_solver.solve_turnstile(AUTH, TURNSTILE_SITEKEY)
         bd = _boundary()
         referer = f"{AUTH}/sign-up?state={state_encoded}"
         body = _multipart({
@@ -118,25 +117,5 @@ class CursorRegister:
                 return urllib.parse.unquote(cookie.value)
         return ""
 
-    def register(self, email: str, password: str = None,
-                 otp_callback: Optional[Callable] = None,
-                 yescaptcha_key: str = "") -> dict:
-        if not password:
-            password = _rand_password()
-        self.log(f"邮箱: {email}")
-        self.log("Step1: 获取 session...")
-        state_encoded, _ = self.step1_get_session()
-        self.log("Step2: 提交邮箱...")
-        self.step2_submit_email(email, state_encoded)
-        self.log("Step3: 提交密码 + Turnstile...")
-        self.step3_submit_password(password, email, state_encoded, yescaptcha_key)
-        self.log("等待 OTP 邮件...")
-        otp = otp_callback() if otp_callback else input("OTP: ")
-        if not otp:
-            raise RuntimeError("未获取到验证码")
-        self.log(f"验证码: {otp}")
-        self.log("Step4: 提交 OTP...")
-        auth_code = self.step4_submit_otp(otp, email, state_encoded)
-        self.log("Step5: 获取 Token...")
-        token = self.step5_get_token(auth_code, state_encoded)
-        return {"email": email, "password": password, "token": token}
+# CursorBrowserRegister 统一从 browser_register.py 导入，避免代码重复
+from platforms.cursor.browser_register import CursorBrowserRegister  # noqa: F401

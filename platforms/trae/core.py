@@ -99,26 +99,3 @@ class TraeRegister:
         except Exception as e:
             self.log(f"  create_order 失败: {e}")
             return ""
-
-    def register(self, email: str, password: str = None,
-                 otp_callback: Optional[Callable] = None) -> dict:
-        if not password:
-            password = _rand_password()
-        self.step1_region()
-        email_ticket = self.step2_send_code(email)
-        otp = otp_callback() if otp_callback else input("OTP: ")
-        if not otp:
-            raise RuntimeError("未获取到验证码")
-        self.log(f"验证码: {otp}")
-        user_id = self.step3_register(email, password, otp)
-        self.step4_trae_login()
-        token = self.step5_get_token()
-        result = self.step6_check_login()
-        cashier_url = self.step7_create_order(token)
-        return {
-            "email": email, "password": password,
-            "user_id": user_id, "token": token,
-            "region": result.get("Region", ""),
-            "cashier_url": cashier_url,
-            "ai_pay_host": result.get("AIPayHost", ""),
-        }

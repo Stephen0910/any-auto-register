@@ -3,7 +3,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
+import random
+import string
 import time
+
+from core.registration import BrowserRegistrationFlow, ProtocolMailboxFlow, ProtocolOAuthFlow, RegistrationContext, RegistrationResult
 
 
 class AccountStatus(str, Enum):
@@ -32,7 +36,7 @@ class Account:
 class RegisterConfig:
     """注册任务配置"""
     executor_type: str = "protocol"   # protocol | headless | headed
-    captcha_solver: str = "yescaptcha"  # yescaptcha | 2captcha | manual
+    captcha_solver: str = "auto"  # auto | yescaptcha | 2captcha | local_solver | manual
     proxy: Optional[str] = None
     extra: dict = field(default_factory=dict)
 
@@ -44,19 +48,103 @@ class BasePlatform(ABC):
     version: str = "1.0.0"
     # 子类声明支持的执行器类型，未列出的自动降级到 protocol
     supported_executors: list = ["protocol", "headless", "headed"]
+    supported_identity_modes: list = ["mailbox"]
+    supported_oauth_providers: list = []
+    protocol_captcha_order: tuple[str, ...] = ("yescaptcha", "2captcha")
 
     def __init__(self, config: RegisterConfig = None):
         self.config = config or RegisterConfig()
+        self._log_fn = print
         if self.config.executor_type not in self.supported_executors:
             raise NotImplementedError(
                 f"{self.display_name} 暂不支持 '{self.config.executor_type}' 执行器，"
                 f"当前支持: {self.supported_executors}"
             )
 
-    @abstractmethod
-    def register(self, email: str, password: str = None) -> Account:
-        """执行注册流程，返回 Account"""
-        ...
+    def set_logger(self, logger):
+        self._log_fn = logger or print
+
+    def log(self, message: str):
+        self._log_fn(message)
+
+    def _make_random_password(self, length: int = 16, charset: Optional[str] = None) -> str:
+        chars = charset or (string.ascii_letters + string.digits + "!@#$")
+        return "".join(random.choices(chars, k=length))
+
+    def _prepare_registration_password(self, password: str | None) -> str | None:
+        return password or self._make_random_password()
+
+    def _should_require_identity_email(self) -> bool:
+        return self._get_identity_provider_name() != "oauth_browser"
+
+    def _browser_registration_label(self, identity) -> str:
+        return getattr(identity, "email", "") or "(oauth)"
+
+    def build_browser_registration_adapter(self):
+        return None
+
+    def build_protocol_mailbox_adapter(self):
+        return None
+
+    def build_protocol_oauth_adapter(self):
+        return None
+
+    def _account_from_registration_result(self, result: RegistrationResult) -> Account:
+        status = result.status or AccountStatus.REGISTERED
+        if isinstance(status, str):
+            try:
+                status = AccountStatus(status)
+            except Exception:
+                status = AccountStatus.REGISTERED
+        return Account(
+            platform=self.name,
+            email=result.email,
+            password=result.password,
+            user_id=result.user_id,
+            region=result.region,
+            token=result.token,
+            status=status,
+            trial_end_time=result.trial_end_time,
+            extra=dict(result.extra or {}),
+        )
+
+    def register(self, email: str = None, password: str = None) -> Account:
+        resolved_password = self._prepare_registration_password(password)
+        identity = self._resolve_identity(email, require_email=self._should_require_identity_email())
+        ctx = RegistrationContext(
+            platform_name=self.name,
+            platform_display_name=self.display_name,
+            platform=self,
+            identity=identity,
+            config=self.config,
+            email=email,
+            password=resolved_password,
+            log_fn=self.log,
+        )
+
+        if (self.config.executor_type or "") in ("headless", "headed"):
+            self.log(f"使用浏览器模式注册: {self._browser_registration_label(identity)}")
+            adapter = self.build_browser_registration_adapter()
+            if adapter is None:
+                raise NotImplementedError(f"{self.display_name} 未实现浏览器注册适配器")
+            result = BrowserRegistrationFlow(adapter).run(ctx)
+            return self._attach_identity_metadata(self._account_from_registration_result(result), identity)
+
+        if getattr(identity, "identity_provider", "") == "oauth_browser":
+            adapter = self.build_protocol_oauth_adapter()
+            if adapter is None:
+                raise RuntimeError(
+                    f"{self.display_name} 当前仅浏览器模式支持 oauth_browser，请使用受支持的浏览器执行器"
+                )
+            result = ProtocolOAuthFlow(adapter).run(ctx)
+            return self._attach_identity_metadata(self._account_from_registration_result(result), identity)
+
+        self.log(f"邮箱: {identity.email}")
+        adapter = self.build_protocol_mailbox_adapter()
+        if adapter is None:
+            raise NotImplementedError(f"{self.display_name} 未实现协议邮箱注册适配器")
+        result = ProtocolMailboxFlow(adapter).run(ctx)
+        return self._attach_identity_metadata(self._account_from_registration_result(result), identity)
 
     @abstractmethod
     def check_valid(self, account: Account) -> bool:
@@ -73,6 +161,12 @@ class BasePlatform(ABC):
         {"id": str, "label": str, "params": [{"key": str, "label": str, "type": str}]}
         """
         return []
+
+    def get_desktop_state(self) -> dict:
+        return {
+            "available": False,
+            "message": f"{self.display_name or self.name} 暂未提供桌面应用状态探测",
+        }
 
     def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
         """
@@ -100,14 +194,109 @@ class BasePlatform(ABC):
 
     def _make_captcha(self, **kwargs):
         """根据 config 创建验证码解决器"""
-        from .base_captcha import YesCaptcha, ManualCaptcha, LocalSolverCaptcha
-        t = self.config.captcha_solver
-        if t == "yescaptcha":
-            key = kwargs.get("key") or self.config.extra.get("yescaptcha_key", "")
-            return YesCaptcha(key)
-        elif t == "manual":
-            return ManualCaptcha()
-        elif t == "local_solver":
-            url = self.config.extra.get("solver_url", "http://localhost:8888")
-            return LocalSolverCaptcha(url)
-        raise ValueError(f"未知验证码解决器: {t}")
+        from .base_captcha import create_captcha_solver
+
+        return create_captcha_solver(self._resolve_captcha_solver(), self.config.extra)
+
+    def _has_configured_captcha(self, solver_name: str) -> bool:
+        from .base_captcha import has_captcha_configured
+
+        return has_captcha_configured(solver_name, self.config.extra)
+
+    def _resolve_captcha_solver(self) -> str:
+        requested = str(self.config.captcha_solver or "").strip().lower()
+        if requested and requested not in {"", "auto"}:
+            if not self._has_configured_captcha(requested):
+                raise RuntimeError(f"{requested} 未配置，无法创建验证码解决器")
+            return requested
+
+        if self.config.executor_type in {"headless", "headed"}:
+            return "local_solver"
+
+        protocol_order = list(self.protocol_captcha_order)
+        try:
+            from infrastructure.provider_settings_repository import ProviderSettingsRepository
+
+            protocol_order = ProviderSettingsRepository().get_enabled_captcha_order(protocol_order)
+        except Exception:
+            protocol_order = list(self.protocol_captcha_order)
+
+        for solver_name in protocol_order:
+            if self._has_configured_captcha(solver_name):
+                return solver_name
+
+        raise RuntimeError("协议模式未配置可用的远程验证码服务，请先启用并配置至少一个验证码 provider")
+
+    def _get_identity_provider_name(self) -> str:
+        from .base_identity import normalize_identity_provider
+        return normalize_identity_provider(self.config.extra.get("identity_provider", "mailbox"))
+
+    def _get_identity_provider(self):
+        from .base_identity import create_identity_provider
+
+        mode = self._get_identity_provider_name()
+        if mode not in self.supported_identity_modes:
+            raise NotImplementedError(
+                f"{self.display_name} 暂不支持 identity_provider='{mode}'，"
+                f"当前支持: {self.supported_identity_modes}"
+            )
+        return create_identity_provider(
+            mode,
+            mailbox=getattr(self, "mailbox", None),
+            extra=self.config.extra,
+        )
+
+    def _resolve_identity(self, email: str = None, *, require_email: bool = True):
+        identity = self._get_identity_provider().resolve(email)
+        self._last_identity = identity
+        if require_email and not identity.email:
+            raise ValueError(
+                f"{self.display_name} 注册流程未获取到可用邮箱，"
+                f"请提供 email 或配置支持的 identity_provider"
+            )
+        return identity
+
+    def _build_identity_snapshot(self, identity) -> dict:
+        snapshot = {
+            "identity_provider": getattr(identity, "identity_provider", "") or "",
+            "resolved_email": getattr(identity, "email", "") or "",
+            "oauth_provider": getattr(identity, "oauth_provider", "") or "",
+            "chrome_user_data_dir": getattr(identity, "chrome_user_data_dir", "") or "",
+            "chrome_cdp_url": getattr(identity, "chrome_cdp_url", "") or "",
+            "metadata": dict(getattr(identity, "metadata", {}) or {}),
+        }
+        mailbox_account = getattr(identity, "mailbox_account", None)
+        if mailbox_account:
+            mailbox_extra = dict(getattr(mailbox_account, "extra", {}) or {})
+            snapshot["mailbox"] = {
+                "provider": (self.config.extra or {}).get("mail_provider", ""),
+                "email": getattr(mailbox_account, "email", "") or "",
+                "account_id": str(getattr(mailbox_account, "account_id", "") or ""),
+            }
+            if isinstance(mailbox_extra.get("provider_account"), dict):
+                snapshot["provider_account"] = mailbox_extra["provider_account"]
+            if isinstance(mailbox_extra.get("provider_resource"), dict):
+                snapshot["provider_resource"] = mailbox_extra["provider_resource"]
+        return snapshot
+
+    def _attach_identity_metadata(self, account: Account, identity=None) -> Account:
+        actual_identity = identity or getattr(self, "_last_identity", None)
+        if not actual_identity:
+            return account
+        extra = dict(account.extra or {})
+        identity_snapshot = self._build_identity_snapshot(actual_identity)
+        extra["identity"] = identity_snapshot
+        if identity_snapshot.get("mailbox"):
+            extra["verification_mailbox"] = identity_snapshot["mailbox"]
+        provider_accounts = list(extra.get("provider_accounts", []) or [])
+        if isinstance(identity_snapshot.get("provider_account"), dict):
+            provider_accounts.append(identity_snapshot["provider_account"])
+        if provider_accounts:
+            extra["provider_accounts"] = provider_accounts
+        provider_resources = list(extra.get("provider_resources", []) or [])
+        if isinstance(identity_snapshot.get("provider_resource"), dict):
+            provider_resources.append(identity_snapshot["provider_resource"])
+        if provider_resources:
+            extra["provider_resources"] = provider_resources
+        account.extra = extra
+        return account

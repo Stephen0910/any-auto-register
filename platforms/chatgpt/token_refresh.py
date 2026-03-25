@@ -8,7 +8,7 @@ import json
 import time
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from curl_cffi import requests as cffi_requests
 
@@ -18,6 +18,10 @@ from curl_cffi import requests as cffi_requests
 # from ..database.models import Account  # removed: external dep
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -186,7 +190,7 @@ class TokenRefreshManager:
                 return result
 
             # 计算过期时间
-            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            expires_at = _utcnow() + timedelta(seconds=expires_in)
 
             result.success = True
             result.access_token = access_token
@@ -297,7 +301,7 @@ def refresh_account_token(account_id: int, proxy_url: Optional[str] = None) -> T
             # 更新数据库
             update_data = {
                 "access_token": result.access_token,
-                "last_refresh": datetime.utcnow()
+                "last_refresh": _utcnow()
             }
 
             if result.refresh_token:

@@ -1,9 +1,18 @@
+from __future__ import annotations
+
 from fastapi import APIRouter
-from core.registry import list_platforms
+
+from application.platforms import PlatformsService
 
 router = APIRouter(prefix="/platforms", tags=["platforms"])
+service = PlatformsService()
 
 
 @router.get("")
-def get_platforms():
-    return list_platforms()
+def list_platforms():
+    return service.list_platforms()
+
+
+@router.get("/{platform}/desktop-state")
+def get_desktop_state(platform: str):
+    return service.get_desktop_state(platform)

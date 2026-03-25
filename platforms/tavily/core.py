@@ -88,18 +88,3 @@ class TavilyRegister:
         except Exception:
             pass
         return ""
-
-    def register(self, email: str, password: str,
-                 otp_callback: Optional[Callable] = None) -> dict:
-        state = self.step1_authorize()
-        captcha_token = self.step2_solve_captcha()
-        challenge_state = self.step3_submit_email(email, state, captcha_token)
-        otp = otp_callback() if otp_callback else input("OTP: ")
-        if not otp:
-            raise RuntimeError("未获取到验证码")
-        self.log(f"验证码: {otp}")
-        pw_state = self.step4_submit_otp(otp, challenge_state)
-        resume_state = self.step5_submit_password(email, password, pw_state)
-        api_key = self.step6_resume_and_get_key(resume_state)
-        self.log(f"API Key: {api_key[:20]}..." if api_key else "未获取到 API Key")
-        return {"email": email, "password": password, "api_key": api_key}

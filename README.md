@@ -101,6 +101,12 @@ python3 -m camoufox fetch
 
 浏览器访问 `http://localhost:5173`
 
+说明：
+
+- 启动入口统一为 `main:app`
+- 后端接口统一位于 `/api/*`
+- 前端默认直接请求 `/api`
+
 ### 开发模式（前端热更新）
 
 ```bash
@@ -111,7 +117,14 @@ npm run dev
 
 ## 邮箱服务配置
 
-注册时需要选择一种邮箱服务用于接收验证码。
+注册时需要选择一种邮箱服务用于接收验证码。当前版本的邮箱和验证码配置都由后端 provider catalog 驱动，前端“全局配置”页已经改成列表式 CRUD：
+
+- 左侧显示已添加的 provider 配置
+- 右侧统一编辑名称、认证方式和字段
+- “新增 Provider”下拉框只展示后端当前已接入但尚未加入的 provider
+- 后端新增 provider 后，前端无需写死选项，刷新页面即可出现
+
+目前数据库模型仍是 `provider_type + provider_key` 唯一，也就是每种 provider 保留一条配置；这套结构适合持续扩展新的 mailbox/captcha provider。
 
 ### MoeMail（推荐）
 
@@ -158,13 +171,23 @@ npm run dev
 ```
 account_manager/
 ├── main.py                 # FastAPI 入口
-├── api/                    # HTTP 接口层
-│   ├── accounts.py         # 账号 CRUD
-│   ├── tasks.py            # 注册任务（SSE 日志）
-│   ├── actions.py          # 平台操作（通用接口）
-│   ├── config.py           # 全局配置持久化
-│   └── proxies.py          # 代理管理
-├── core/                   # 基础设施层
+├── api/                    # HTTP 路由层
+│   ├── accounts.py         # 账号 CRUD + 导出
+│   ├── account_checks.py   # 账号检测
+│   ├── task_commands.py    # 注册任务创建 + SSE
+│   ├── tasks.py            # 任务查询
+│   ├── task_logs.py        # 历史任务日志
+│   ├── actions.py          # 平台操作
+│   ├── config.py           # 配置读写
+│   ├── platforms.py        # 平台列表
+│   ├── platform_capabilities.py
+│   ├── proxies.py          # 代理管理
+│   ├── health.py           # 健康检查
+│   └── system.py           # Solver 管理
+├── application/            # 应用服务层
+├── domain/                 # 领域模型
+├── infrastructure/         # 仓储与运行时适配
+├── core/                   # 基础能力
 │   ├── base_platform.py    # 平台基类
 │   ├── base_mailbox.py     # 邮箱服务基类 + 工厂方法
 │   ├── base_captcha.py     # 验证码服务基类
@@ -179,7 +202,9 @@ account_manager/
 │       └── switch.py       # 账号切换逻辑
 ├── services/               # 后台服务
 │   ├── solver_manager.py   # Turnstile Solver 进程管理
-│   └── turnstile_solver/   # 本地 Camoufox Solver
+│   └── task_runtime.py     # 持久化任务执行器
+├── scripts/
+│   └── smoke.py            # API 冒烟检查
 └── frontend/               # React 前端
 ```
 

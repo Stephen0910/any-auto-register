@@ -11,7 +11,7 @@ import secrets
 import string
 from typing import Optional, Dict, Any, Tuple, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from curl_cffi import requests as cffi_requests
 
@@ -137,7 +137,7 @@ class RegistrationEngine:
 
     def _log(self, message: str, level: str = "info"):
         """记录日志"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
         log_message = f"[{timestamp}] {message}"
 
         # 添加到日志列表
@@ -145,13 +145,13 @@ class RegistrationEngine:
 
         # 调用回调函数
         if self.callback_logger:
-            self.callback_logger(log_message)
+            self.callback_logger(message)
 
         # 记录到数据库（如果有关联任务）
         if self.task_uuid:
             try:
                 with get_db() as db:
-                    crud.append_task_log(db, self.task_uuid, log_message)
+                    crud.append_task_log(db, self.task_uuid, message)
             except Exception as e:
                 logger.warning(f"记录任务日志失败: {e}")
 
@@ -808,7 +808,7 @@ class RegistrationEngine:
             result.metadata = {
                 "email_service": self.email_service.service_type.value,
                 "proxy_used": self.proxy_url,
-                "registered_at": datetime.now().isoformat(),
+                "registered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "is_existing_account": self._is_existing_account,
             }
 

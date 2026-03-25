@@ -1,9 +1,13 @@
 """定时任务调度 - 账号有效性检测、trial 到期提醒"""
 from datetime import datetime, timezone
+
 from sqlmodel import Session, select
+
+from .account_graph import load_account_graphs, patch_account_graph
+from .base_platform import AccountStatus, RegisterConfig
 from .db import engine, AccountModel
+from .platform_accounts import build_platform_account
 from .registry import get, load_all
-from .base_platform import Account, AccountStatus, RegisterConfig
 import threading
 import time
 
@@ -37,14 +41,17 @@ class Scheduler:
         """检查 trial 到期账号，更新状态"""
         now = int(datetime.now(timezone.utc).timestamp())
         with Session(engine) as s:
-            accounts = s.exec(
-                select(AccountModel).where(AccountModel.status == "trial")
-            ).all()
+            accounts = s.exec(select(AccountModel)).all()
+            graphs = load_account_graphs(s, [int(acc.id or 0) for acc in accounts if acc.id])
             updated = 0
             for acc in accounts:
-                if acc.trial_end_time and acc.trial_end_time < now:
-                    acc.status = AccountStatus.EXPIRED.value
+                graph = graphs.get(int(acc.id or 0), {})
+                if graph.get("lifecycle_status") != "trial":
+                    continue
+                trial_end_time = int((graph.get("overview") or {}).get("trial_end_time") or 0)
+                if trial_end_time and trial_end_time < now:
                     acc.updated_at = datetime.now(timezone.utc)
+                    patch_account_graph(s, acc, lifecycle_status=AccountStatus.EXPIRED.value)
                     s.add(acc)
                     updated += 1
             s.commit()
@@ -55,34 +62,33 @@ class Scheduler:
         """批量检测账号有效性"""
         load_all()
         with Session(engine) as s:
-            q = select(AccountModel).where(
-                AccountModel.status.in_(["registered", "trial", "subscribed"])
-            )
+            q = select(AccountModel)
             if platform:
                 q = q.where(AccountModel.platform == platform)
             accounts = s.exec(q.limit(limit)).all()
+            graphs = load_account_graphs(s, [int(acc.id or 0) for acc in accounts if acc.id])
+            accounts = [
+                acc for acc in accounts
+                if graphs.get(int(acc.id or 0), {}).get("lifecycle_status") in {"registered", "trial", "subscribed"}
+            ]
 
         results = {"valid": 0, "invalid": 0, "error": 0}
         for acc in accounts:
             try:
                 PlatformCls = get(acc.platform)
                 plugin = PlatformCls(config=RegisterConfig())
-                import json
-                account_obj = Account(
-                    platform=acc.platform,
-                    email=acc.email,
-                    password=acc.password,
-                    user_id=acc.user_id,
-                    region=acc.region,
-                    token=acc.token,
-                    extra=json.loads(acc.extra_json or "{}"),
-                )
+                with Session(engine) as s:
+                    current = s.get(AccountModel, acc.id)
+                    if not current:
+                        continue
+                    account_obj = build_platform_account(s, current)
                 valid = plugin.check_valid(account_obj)
                 with Session(engine) as s:
                     a = s.get(AccountModel, acc.id)
                     if a:
-                        a.status = acc.status if valid else AccountStatus.INVALID.value
                         a.updated_at = datetime.now(timezone.utc)
+                        next_status = None if valid else AccountStatus.INVALID.value
+                        patch_account_graph(s, a, lifecycle_status=next_status)
                         s.add(a)
                         s.commit()
                 if valid:

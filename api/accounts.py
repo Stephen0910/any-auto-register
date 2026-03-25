@@ -1,30 +1,51 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from sqlmodel import Session, select, func
-from pydantic import BaseModel
-from core.db import AccountModel, get_session
-from typing import Optional
-from datetime import datetime, timezone
-import io, csv, json, logging
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
+import io
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from application.account_exports import AccountExportsService, ExportArtifact
+from application.accounts import AccountsService
+from domain.accounts import AccountCreateCommand, AccountExportSelection, AccountQuery, AccountUpdateCommand
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+service = AccountsService()
+exports_service = AccountExportsService()
 
 
-class AccountCreate(BaseModel):
+class AccountCreateRequest(BaseModel):
     platform: str
     email: str
     password: str
-    status: str = "registered"
-    token: str = ""
+    user_id: str = ""
+    lifecycle_status: str = "registered"
+    overview: dict = Field(default_factory=dict)
+    credentials: dict = Field(default_factory=dict)
+    provider_accounts: list[dict] = Field(default_factory=list)
+    provider_resources: list[dict] = Field(default_factory=list)
+    primary_token: str = ""
     cashier_url: str = ""
+    region: str = ""
+    trial_end_time: int = 0
 
 
-class AccountUpdate(BaseModel):
-    status: Optional[str] = None
-    token: Optional[str] = None
+class AccountUpdateRequest(BaseModel):
+    password: Optional[str] = None
+    user_id: Optional[str] = None
+    lifecycle_status: Optional[str] = None
+    overview: Optional[dict] = None
+    credentials: Optional[dict] = None
+    provider_accounts: Optional[list[dict]] = None
+    provider_resources: Optional[list[dict]] = None
+    replace_provider_accounts: bool = False
+    replace_provider_resources: bool = False
+    primary_token: Optional[str] = None
     cashier_url: Optional[str] = None
+    region: Optional[str] = None
+    trial_end_time: Optional[int] = None
 
 
 class ImportRequest(BaseModel):
@@ -32,189 +53,152 @@ class ImportRequest(BaseModel):
     lines: list[str]
 
 
+class BatchExportRequest(BaseModel):
+    platform: str = "chatgpt"
+    ids: list[int] = Field(default_factory=list)
+    select_all: bool = False
+    status_filter: Optional[str] = None
+    email_service_filter: Optional[str] = None
+    search_filter: Optional[str] = None
+
+
+def _stream_artifact(artifact: ExportArtifact) -> StreamingResponse:
+    if isinstance(artifact.content, io.BytesIO):
+        body = artifact.content
+    elif isinstance(artifact.content, bytes):
+        body = iter([artifact.content])
+    else:
+        body = iter([artifact.content])
+    return StreamingResponse(
+        body,
+        media_type=artifact.media_type,
+        headers={"Content-Disposition": f"attachment; filename={artifact.filename}"},
+    )
+
+
 @router.get("")
 def list_accounts(
-    platform: Optional[str] = None,
-    status: Optional[str] = None,
-    email: Optional[str] = None,
+    platform: str = "",
+    status: str = "",
+    email: str = "",
     page: int = 1,
     page_size: int = 20,
-    session: Session = Depends(get_session),
 ):
-    q = select(AccountModel)
-    if platform:
-        q = q.where(AccountModel.platform == platform)
-    if status:
-        q = q.where(AccountModel.status == status)
-    if email:
-        q = q.where(AccountModel.email.contains(email))
-    total = len(session.exec(q).all())
-    items = session.exec(q.offset((page - 1) * page_size).limit(page_size)).all()
-    return {"total": total, "page": page, "items": items}
+    return service.list_accounts(AccountQuery(platform=platform, status=status, email=email, page=page, page_size=page_size))
 
 
 @router.post("")
-def create_account(body: AccountCreate, session: Session = Depends(get_session)):
-    acc = AccountModel(
-        platform=body.platform,
-        email=body.email,
-        password=body.password,
-        status=body.status,
-        token=body.token,
-        cashier_url=body.cashier_url,
-    )
-    session.add(acc)
-    session.commit()
-    session.refresh(acc)
-    return acc
+def create_account(body: AccountCreateRequest):
+    return service.create_account(AccountCreateCommand(**body.model_dump()))
 
 
 @router.get("/stats")
-def get_stats(session: Session = Depends(get_session)):
-    """统计各平台账号数量和状态分布"""
-    accounts = session.exec(select(AccountModel)).all()
-    platforms: dict = {}
-    statuses: dict = {}
-    for acc in accounts:
-        platforms[acc.platform] = platforms.get(acc.platform, 0) + 1
-        statuses[acc.status] = statuses.get(acc.status, 0) + 1
-    return {"total": len(accounts), "by_platform": platforms, "by_status": statuses}
+def get_stats():
+    return service.get_stats()
 
 
 @router.get("/export")
-def export_accounts(
-    platform: Optional[str] = None,
-    status: Optional[str] = None,
-    session: Session = Depends(get_session),
-):
-    q = select(AccountModel)
-    if platform:
-        q = q.where(AccountModel.platform == platform)
-    if status:
-        q = q.where(AccountModel.status == status)
-    accounts = session.exec(q).all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["platform", "email", "password", "user_id", "region",
-                     "status", "cashier_url", "created_at"])
-    for acc in accounts:
-        writer.writerow([acc.platform, acc.email, acc.password, acc.user_id,
-                         acc.region, acc.status, acc.cashier_url,
-                         acc.created_at.strftime("%Y-%m-%d %H:%M:%S")])
-    output.seek(0)
+def export_accounts(platform: str = "", status: str = ""):
+    content = service.export_csv(AccountQuery(platform=platform, status=status, page=1, page_size=100000))
     return StreamingResponse(
-        iter([output.getvalue()]),
+        iter([content]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=accounts.csv"}
+        headers={"Content-Disposition": "attachment; filename=accounts.csv"},
     )
 
 
+@router.post("/export/json")
+def export_accounts_json(body: BatchExportRequest):
+    try:
+        artifact = exports_service.export_chatgpt_json(
+            AccountExportSelection(
+                platform=body.platform,
+                ids=body.ids,
+                select_all=body.select_all,
+                status_filter=body.status_filter or "",
+                search_filter=body.search_filter or "",
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _stream_artifact(artifact)
+
+
+@router.post("/export/csv")
+def export_accounts_csv(body: BatchExportRequest):
+    try:
+        artifact = exports_service.export_chatgpt_csv(
+            AccountExportSelection(
+                platform=body.platform,
+                ids=body.ids,
+                select_all=body.select_all,
+                status_filter=body.status_filter or "",
+                search_filter=body.search_filter or "",
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _stream_artifact(artifact)
+
+
+@router.post("/export/sub2api")
+def export_accounts_sub2api(body: BatchExportRequest):
+    try:
+        artifact = exports_service.export_chatgpt_sub2api(
+            AccountExportSelection(
+                platform=body.platform,
+                ids=body.ids,
+                select_all=body.select_all,
+                status_filter=body.status_filter or "",
+                search_filter=body.search_filter or "",
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _stream_artifact(artifact)
+
+
+@router.post("/export/cpa")
+def export_accounts_cpa(body: BatchExportRequest):
+    try:
+        artifact = exports_service.export_chatgpt_cpa(
+            AccountExportSelection(
+                platform=body.platform,
+                ids=body.ids,
+                select_all=body.select_all,
+                status_filter=body.status_filter or "",
+                search_filter=body.search_filter or "",
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _stream_artifact(artifact)
+
+
 @router.post("/import")
-def import_accounts(
-    body: ImportRequest,
-    session: Session = Depends(get_session),
-):
-    """批量导入，每行格式: email password [extra]"""
-    created = 0
-    for line in body.lines:
-        parts = line.strip().split()
-        if len(parts) < 2:
-            continue
-        email, password = parts[0], parts[1]
-        extra = parts[2] if len(parts) > 2 else ""
-        if extra:
-            try:
-                json.loads(extra)
-            except (json.JSONDecodeError, ValueError):
-                extra = "{}"
-        else:
-            extra = "{}"
-        acc = AccountModel(platform=body.platform, email=email,
-                           password=password, extra_json=extra)
-        session.add(acc)
-        created += 1
-    session.commit()
-    return {"created": created}
-
-
-@router.post("/check-all")
-def check_all_accounts(platform: Optional[str] = None,
-                       background_tasks: BackgroundTasks = None):
-    from core.scheduler import scheduler
-    background_tasks.add_task(scheduler.check_accounts_valid, platform)
-    return {"message": "批量检测任务已启动"}
+def import_accounts(body: ImportRequest):
+    return service.import_accounts(body.platform, body.lines)
 
 
 @router.get("/{account_id}")
-def get_account(account_id: int, session: Session = Depends(get_session)):
-    acc = session.get(AccountModel, account_id)
-    if not acc:
+def get_account(account_id: int):
+    item = service.get_account(account_id)
+    if not item:
         raise HTTPException(404, "账号不存在")
-    return acc
+    return item
 
 
 @router.patch("/{account_id}")
-def update_account(account_id: int, body: AccountUpdate,
-                   session: Session = Depends(get_session)):
-    acc = session.get(AccountModel, account_id)
-    if not acc:
+def update_account(account_id: int, body: AccountUpdateRequest):
+    item = service.update_account(account_id, AccountUpdateCommand(**body.model_dump()))
+    if not item:
         raise HTTPException(404, "账号不存在")
-    if body.status is not None:
-        acc.status = body.status
-    if body.token is not None:
-        acc.token = body.token
-    if body.cashier_url is not None:
-        acc.cashier_url = body.cashier_url
-    acc.updated_at = datetime.now(timezone.utc)
-    session.add(acc)
-    session.commit()
-    session.refresh(acc)
-    return acc
+    return item
 
 
 @router.delete("/{account_id}")
-def delete_account(account_id: int, session: Session = Depends(get_session)):
-    acc = session.get(AccountModel, account_id)
-    if not acc:
+def delete_account(account_id: int):
+    result = service.delete_account(account_id)
+    if not result["ok"]:
         raise HTTPException(404, "账号不存在")
-    session.delete(acc)
-    session.commit()
-    return {"ok": True}
-
-
-@router.post("/{account_id}/check")
-def check_account(account_id: int, background_tasks: BackgroundTasks,
-                  session: Session = Depends(get_session)):
-    acc = session.get(AccountModel, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
-    background_tasks.add_task(_do_check, account_id)
-    return {"message": "检测任务已启动"}
-
-
-def _do_check(account_id: int):
-    from core.db import engine
-    from sqlmodel import Session
-    with Session(engine) as s:
-        acc = s.get(AccountModel, account_id)
-    if acc:
-        from core.base_platform import Account, RegisterConfig
-        from core.registry import get
-        try:
-            PlatformCls = get(acc.platform)
-            plugin = PlatformCls(config=RegisterConfig())
-            obj = Account(platform=acc.platform, email=acc.email,
-                         password=acc.password, user_id=acc.user_id,
-                         region=acc.region, token=acc.token,
-                         extra=json.loads(acc.extra_json or "{}"))
-            valid = plugin.check_valid(obj)
-            with Session(engine) as s:
-                a = s.get(AccountModel, account_id)
-                if a:
-                    a.status = a.status if valid else "invalid"
-                    a.updated_at = datetime.now(timezone.utc)
-                    s.add(a)
-                    s.commit()
-        except Exception:
-            logger.exception("检测账号 %s 时出错", account_id)
+    return result

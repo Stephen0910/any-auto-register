@@ -3,15 +3,15 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+  'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]',
   {
     variants: {
       variant: {
-        default: 'bg-indigo-500/20 text-[var(--text-accent)]',
-        success: 'bg-emerald-500/20 text-emerald-300',
-        warning: 'bg-amber-500/20 text-amber-300',
-        danger: 'bg-red-500/20 text-red-300',
-        secondary: 'bg-[var(--bg-hover)] text-[var(--text-secondary)]',
+        default: 'border-[var(--accent-edge)] bg-[var(--accent-soft)] text-[var(--text-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]',
+        success: 'border-[rgba(82,211,167,0.22)] bg-[rgba(82,211,167,0.13)] text-emerald-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]',
+        warning: 'border-[rgba(216,154,96,0.24)] bg-[rgba(216,154,96,0.13)] text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]',
+        danger: 'border-[rgba(228,113,113,0.22)] bg-[rgba(228,113,113,0.13)] text-red-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]',
+        secondary: 'border-[var(--border-soft)] bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] text-[var(--text-secondary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]',
       },
     },
     defaultVariants: { variant: 'default' },

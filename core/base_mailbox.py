@@ -1,6 +1,9 @@
 """邮箱池基类 - 抽象临时邮箱/收件服务"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import html
+import re
+from urllib.parse import urlencode, urlparse
 
 
 @dataclass
@@ -28,61 +31,133 @@ class BaseMailbox(ABC):
         """返回当前邮件 ID 集合（用于过滤旧邮件）"""
         ...
 
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        """等待并返回验证链接。默认由具体 provider 自行实现。"""
+        raise NotImplementedError(f"{self.__class__.__name__} 暂不支持 wait_for_link()")
+
+
+def _extract_verification_link(text: str, keyword: str = "") -> str | None:
+    combined = str(text or "")
+    lowered = combined.lower()
+    if keyword and keyword.lower() not in lowered:
+        return None
+
+    urls = [
+        html.unescape(raw).rstrip(").,;")
+        for raw in re.findall(r'https?://[^\s<>"\']+', combined, re.IGNORECASE)
+    ]
+    if not urls:
+        return None
+
+    primary_link_hints = ("verif", "confirm", "magic", "auth", "callback", "signin", "signup", "continue")
+    primary_host_hints = ("tavily", "firecrawl", "clerk", "stytch", "auth", "login")
+    for url in urls:
+        url_lower = url.lower()
+        if any(token in url_lower for token in primary_link_hints) and any(host in url_lower for host in primary_host_hints):
+            return url
+
+    verification_hints = ("verify", "verification", "confirm", "magic link", "sign in", "login", "auth", "tavily", "firecrawl")
+    if not any(token in lowered for token in verification_hints):
+        return None
+
+    for url in urls:
+        url_lower = url.lower()
+        if any(token in url_lower for token in primary_link_hints):
+            return url
+
+    return urls[0]
+
+
+def _normalize_api_base_url(value: str | None, *, default: str, label: str) -> str:
+    raw = str(value or "").strip() or default
+    if "://" not in raw:
+        raw = f"https://{raw.lstrip('/')}"
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"{label} 无效: {value!r}")
+    return raw.rstrip("/")
+
+
+def _create_tempmail(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return TempMailLolMailbox(proxy=proxy)
+
+
+def _create_duckmail(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return DuckMailMailbox(
+        api_url=extra.get("duckmail_api_url", "https://www.duckmail.sbs"),
+        provider_url=extra.get("duckmail_provider_url", "https://api.duckmail.sbs"),
+        bearer=extra.get("duckmail_bearer", "kevin273945"),
+        proxy=proxy,
+    )
+
+
+def _create_freemail(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return FreemailMailbox(
+        api_url=extra.get("freemail_api_url", ""),
+        admin_token=extra.get("freemail_admin_token", ""),
+        username=extra.get("freemail_username", ""),
+        password=extra.get("freemail_password", ""),
+        proxy=proxy,
+    )
+
+
+def _create_moemail(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return MoeMailMailbox(
+        api_url=extra.get("moemail_api_url"),
+        username=extra.get("moemail_username", ""),
+        password=extra.get("moemail_password", ""),
+        session_token=extra.get("moemail_session_token", ""),
+        proxy=proxy,
+    )
+
+
+def _create_cfworker(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return CFWorkerMailbox(
+        api_url=extra.get("cfworker_api_url", ""),
+        admin_token=extra.get("cfworker_admin_token", ""),
+        domain=extra.get("cfworker_domain", ""),
+        fingerprint=extra.get("cfworker_fingerprint", ""),
+        proxy=proxy,
+    )
+
+
+def _create_laoudo(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return LaoudoMailbox(
+        auth_token=extra.get("laoudo_auth", ""),
+        email=extra.get("laoudo_email", ""),
+        account_id=extra.get("laoudo_account_id", ""),
+    )
+
+
+MAILBOX_FACTORY_REGISTRY = {
+    "tempmail_lol_api": _create_tempmail,
+    "duckmail_api": _create_duckmail,
+    "freemail_api": _create_freemail,
+    "moemail_api": _create_moemail,
+    "cfworker_admin_api": _create_cfworker,
+    "laoudo_api": _create_laoudo,
+    # backward-compat fallback
+    "tempmail_lol": _create_tempmail,
+    "duckmail": _create_duckmail,
+    "freemail": _create_freemail,
+    "moemail": _create_moemail,
+    "cfworker": _create_cfworker,
+    "laoudo": _create_laoudo,
+}
+
 
 def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'BaseMailbox':
     """工厂方法：根据 provider 创建对应的 mailbox 实例"""
-    extra = extra or {}
-    if provider == "mail_service":
-        from core.mail_service_mailbox import MailServiceMailbox
-        return MailServiceMailbox(
-            provider=extra.get("mail_service_provider", "all"),
-            base_url=extra.get("mail_service_url", "http://10.10.10.8:5500"),
-        )
-    elif provider == "tempmail_lol":
-        return TempMailLolMailbox(proxy=proxy)
-    elif provider == "mailtm":
-        return MailTmMailbox(proxy=proxy)
-    elif provider == "duckmail":
-        return DuckMailMailbox(
-            api_url=extra.get("duckmail_api_url") or "https://www.duckmail.sbs",
-            provider_url=extra.get("duckmail_provider_url") or "https://api.duckmail.sbs",
-            bearer=extra.get("duckmail_bearer") or "kevin273945",
-            proxy=proxy,
-        )
-    elif provider == "freemail":
-        return FreemailMailbox(
-            api_url=extra.get("freemail_api_url", ""),
-            admin_token=extra.get("freemail_admin_token", ""),
-            username=extra.get("freemail_username", ""),
-            password=extra.get("freemail_password", ""),
-            proxy=proxy,
-        )
-    elif provider == "moemail":
-        return MoeMailMailbox(
-            api_url=extra.get("moemail_api_url", "https://sall.cc"),
-            proxy=proxy,
-        )
-    elif provider == "cfworker":
-        return CFWorkerMailbox(
-            api_url=extra.get("cfworker_api_url", ""),
-            admin_token=extra.get("cfworker_admin_token", ""),
-            domain=extra.get("cfworker_domain", ""),
-            fingerprint=extra.get("cfworker_fingerprint", ""),
-            proxy=proxy,
-        )
-    elif provider == "autotempmail":
-        return AutoTempMailMailbox(
-            api_url=extra.get("autotempmail_api_url", ""),
-            admin_token=extra.get("autotempmail_admin_token", ""),
-            domain=extra.get("autotempmail_domain", ""),
-            proxy=proxy,
-        )
-    else:  # laoudo
-        return LaoudoMailbox(
-            auth_token=extra.get("laoudo_auth", ""),
-            email=extra.get("laoudo_email", ""),
-            account_id=extra.get("laoudo_account_id", ""),
-        )
+    from infrastructure.provider_definitions_repository import ProviderDefinitionsRepository
+    from infrastructure.provider_settings_repository import ProviderSettingsRepository
+
+    provider_key = str(provider or "moemail")
+    definition = ProviderDefinitionsRepository().get_by_key("mailbox", provider_key)
+    resolved_extra = ProviderSettingsRepository().resolve_runtime_settings("mailbox", provider_key, extra or {})
+    lookup_key = definition.driver_type if definition else provider_key
+    factory = MAILBOX_FACTORY_REGISTRY.get(lookup_key, _create_laoudo)
+    return factory(resolved_extra, proxy)
 
 
 class LaoudoMailbox(BaseMailbox):
@@ -95,7 +170,37 @@ class LaoudoMailbox(BaseMailbox):
         self._ua = "Mozilla/5.0"
 
     def get_email(self) -> MailboxAccount:
-        return MailboxAccount(email=self._email, account_id=self._account_id)
+        return MailboxAccount(
+            email=self._email,
+            account_id=self._account_id,
+            extra={
+                "provider_account": {
+                    "provider_type": "mailbox",
+                    "provider_name": "laoudo",
+                    "login_identifier": self._email,
+                    "display_name": self._email,
+                    "credentials": {
+                        "authorization": self.auth,
+                    },
+                    "metadata": {
+                        "account_id": self._account_id,
+                        "email": self._email,
+                    },
+                },
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "laoudo",
+                    "resource_type": "mailbox",
+                    "resource_identifier": self._account_id,
+                    "handle": self._email,
+                    "display_name": self._email,
+                    "metadata": {
+                        "account_id": self._account_id,
+                        "email": self._email,
+                    },
+                },
+            },
+        )
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         from curl_cffi import requests as curl_requests
@@ -142,11 +247,43 @@ class LaoudoMailbox(BaseMailbox):
                             continue
                         m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                         if m:
-                            return m.group(1)
+                            return m.group(1) if m.groups() else m.group(0)
             except Exception:
                 pass
             time.sleep(4)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time
+        from curl_cffi import requests as curl_requests
+        seen = set(before_ids or [])
+        start = time.time()
+        headers = {"authorization": self.auth, "user-agent": self._ua}
+        while time.time() - start < timeout:
+            try:
+                r = curl_requests.get(
+                    f"{self.api}/list",
+                    params={"accountId": account.account_id, "allReceive": 0,
+                            "emailId": 0, "timeSort": 1, "size": 50, "type": 0},
+                    headers=headers, timeout=15, impersonate="chrome131"
+                )
+                if r.status_code == 200:
+                    mails = r.json().get("data", {}).get("list", []) or []
+                    for mail in mails:
+                        mid = mail.get("id") or mail.get("emailId")
+                        if not mid or mid in seen:
+                            continue
+                        seen.add(mid)
+                        text = (str(mail.get("subject", "")) + " " +
+                                str(mail.get("content") or mail.get("html") or ""))
+                        link = _extract_verification_link(text, keyword)
+                        if link:
+                            return link
+            except Exception:
+                pass
+            time.sleep(4)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class AitreMailbox(BaseMailbox):
@@ -193,11 +330,41 @@ class AitreMailbox(BaseMailbox):
                             continue
                         m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                         if m:
-                            return m.group(1)
+                            return m.group(1) if m.groups() else m.group(0)
             except Exception:
                 pass
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time, requests
+        seen = set(before_ids or [])
+        last_check = None
+        start = time.time()
+        while time.time() - start < timeout:
+            params = {"email": account.email}
+            if last_check:
+                params["lastCheck"] = last_check
+            try:
+                r = requests.get(f"{self.api}/poll", params=params, timeout=10)
+                data = r.json()
+                last_check = data.get("lastChecked")
+                if data.get("count", 0) > 0:
+                    r2 = requests.get(f"{self.api}/emails", params={"email": account.email}, timeout=10)
+                    for mail in r2.json().get("emails", []):
+                        mid = str(mail.get("id", ""))
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                        text = str(mail.get("preview", "")) + " " + str(mail.get("content", ""))
+                        link = _extract_verification_link(text, keyword)
+                        if link:
+                            return link
+            except Exception:
+                pass
+            time.sleep(3)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class TempMailLolMailbox(BaseMailbox):
@@ -217,7 +384,24 @@ class TempMailLolMailbox(BaseMailbox):
         data = r.json()
         self._email = data.get("address") or data.get("email", "")
         self._token = data.get("token", "")
-        return MailboxAccount(email=self._email, account_id=self._token)
+        return MailboxAccount(
+            email=self._email,
+            account_id=self._token,
+            extra={
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "tempmail_lol",
+                    "resource_type": "mailbox",
+                    "resource_identifier": self._token,
+                    "handle": self._email,
+                    "display_name": self._email,
+                    "metadata": {
+                        "email": self._email,
+                        "token": self._token,
+                    },
+                },
+            },
+        )
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         import requests
@@ -249,11 +433,35 @@ class TempMailLolMailbox(BaseMailbox):
                         continue
                     m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', text)
                     if m:
-                        return m.group(1)
+                        return m.group(1) if m.groups() else m.group(0)
             except Exception:
                 pass
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time, requests
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                r = requests.get(f"{self.api}/inbox",
+                    params={"token": account.account_id},
+                    proxies=self.proxy, timeout=10)
+                for mail in sorted(r.json().get("emails", []), key=lambda x: x.get("date", 0), reverse=True):
+                    mid = str(mail.get("id", ""))
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                    text = str(mail.get("subject", "")) + " " + str(mail.get("body", "")) + " " + str(mail.get("html", ""))
+                    link = _extract_verification_link(text, keyword)
+                    if link:
+                        return link
+            except Exception:
+                pass
+            time.sleep(3)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class DuckMailMailbox(BaseMailbox):
@@ -286,15 +494,47 @@ class DuckMailMailbox(BaseMailbox):
         # 创建账号
         r = requests.post(f"{self.api}/api/mail?endpoint=%2Faccounts",
             json={"address": address, "password": password},
-            headers=self._common_headers(), proxies=self.proxy, timeout=15)
+            headers=self._common_headers(), proxies=self.proxy, timeout=15, verify=False)
         data = r.json()
         self._address = data.get("address", address)
         # 登录获取 token
         r2 = requests.post(f"{self.api}/api/mail?endpoint=%2Ftoken",
             json={"address": self._address, "password": password},
-            headers=self._common_headers(), proxies=self.proxy, timeout=15)
+            headers=self._common_headers(), proxies=self.proxy, timeout=15, verify=False)
         self._token = r2.json().get("token", "")
-        return MailboxAccount(email=self._address, account_id=self._token)
+        return MailboxAccount(
+            email=self._address,
+            account_id=self._token,
+            extra={
+                "provider_account": {
+                    "provider_type": "mailbox",
+                    "provider_name": "duckmail",
+                    "login_identifier": self._address,
+                    "display_name": self._address,
+                    "credentials": {
+                        "address": self._address,
+                        "password": password,
+                        "token": self._token,
+                    },
+                    "metadata": {
+                        "provider_url": self.provider_url,
+                        "api_url": self.api,
+                    },
+                },
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "duckmail",
+                    "resource_type": "mailbox",
+                    "resource_identifier": self._token,
+                    "handle": self._address,
+                    "display_name": self._address,
+                    "metadata": {
+                        "email": self._address,
+                        "provider_url": self.provider_url,
+                    },
+                },
+            },
+        )
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         import requests
@@ -302,7 +542,7 @@ class DuckMailMailbox(BaseMailbox):
             r = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
                 headers={"authorization": f"Bearer {account.account_id}",
                          "x-api-provider-base-url": self.provider_url},
-                proxies=self.proxy, timeout=10)
+                proxies=self.proxy, timeout=10, verify=False)
             return {str(m["id"]) for m in r.json().get("hydra:member", [])}
         except Exception:
             return set()
@@ -317,7 +557,7 @@ class DuckMailMailbox(BaseMailbox):
                 r = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
                     headers={"authorization": f"Bearer {account.account_id}",
                              "x-api-provider-base-url": self.provider_url},
-                    proxies=self.proxy, timeout=10)
+                    proxies=self.proxy, timeout=10, verify=False)
                 msgs = r.json().get("hydra:member", [])
                 for msg in msgs:
                     mid = str(msg.get("id") or msg.get("msgid") or "")
@@ -328,7 +568,7 @@ class DuckMailMailbox(BaseMailbox):
                         r2 = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%2F{mid}",
                             headers={"authorization": f"Bearer {account.account_id}",
                                      "x-api-provider-base-url": self.provider_url},
-                            proxies=self.proxy, timeout=10)
+                            proxies=self.proxy, timeout=10, verify=False)
                         detail = r2.json()
                         body = str(detail.get("text") or "") + " " + str(detail.get("subject") or "")
                     except Exception:
@@ -340,6 +580,40 @@ class DuckMailMailbox(BaseMailbox):
                 pass
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time, requests
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                r = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
+                    headers={"authorization": f"Bearer {account.account_id}",
+                             "x-api-provider-base-url": self.provider_url},
+                    proxies=self.proxy, timeout=10, verify=False)
+                msgs = r.json().get("hydra:member", [])
+                for msg in msgs:
+                    mid = str(msg.get("id") or msg.get("msgid") or "")
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                    try:
+                        r2 = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%2F{mid}",
+                            headers={"authorization": f"Bearer {account.account_id}",
+                                     "x-api-provider-base-url": self.provider_url},
+                            proxies=self.proxy, timeout=10, verify=False)
+                        detail = r2.json()
+                        body = str(detail.get("text") or "") + " " + str(detail.get("html") or "") + " " + str(detail.get("subject") or "")
+                    except Exception:
+                        body = str(msg.get("subject") or "")
+                    link = _extract_verification_link(body, keyword)
+                    if link:
+                        return link
+            except Exception:
+                pass
+            time.sleep(3)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class CFWorkerMailbox(BaseMailbox):
@@ -379,7 +653,26 @@ class CFWorkerMailbox(BaseMailbox):
         token = data.get("token", data.get("jwt", ""))
         self._token = token
         print(f"[CFWorker] 生成邮箱: {email} token={token[:40] if token else 'NONE'}...")
-        return MailboxAccount(email=email, account_id=token)
+        return MailboxAccount(
+            email=email,
+            account_id=token,
+            extra={
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "cfworker",
+                    "resource_type": "mailbox",
+                    "resource_identifier": token or email,
+                    "handle": email,
+                    "display_name": email,
+                    "metadata": {
+                        "email": email,
+                        "token": token,
+                        "api_url": self.api,
+                        "domain": self.domain,
+                    },
+                },
+            },
+        )
 
     def _get_mails(self, email: str) -> list:
         import requests
@@ -433,69 +726,199 @@ class CFWorkerMailbox(BaseMailbox):
                     search_text = re.sub(r'\bt=\d+\b', '', search_text)
                     m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', search_text)
                     if m:
-                        return m.group(1) if m.lastindex else m.group(0)
-            except Exception as e:
-                import traceback
-                print(f"[CFWorker.wait_for_code] exception: {e}")
-                traceback.print_exc()
-            first_round = False
+                        return m.group(1) if m.groups() else m.group(0)
+            except Exception:
+                pass
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                mails = self._get_mails(account.email)
+                for mail in sorted(mails, key=lambda x: x.get("id", 0), reverse=True):
+                    mid = str(mail.get("id", ""))
+                    if not mid or mid in seen:
+                        continue
+                    seen.add(mid)
+                    raw = str(mail.get("raw", ""))
+                    link = _extract_verification_link(raw, keyword)
+                    if link:
+                        return link
+            except Exception:
+                pass
+            time.sleep(3)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class MoeMailMailbox(BaseMailbox):
     """MoeMail (sall.cc) 邮箱服务 - 自动注册账号并生成临时邮箱"""
 
-    def __init__(self, api_url: str = "https://sall.cc", proxy: str = None):
-        self.api = api_url.rstrip("/")
+    def __init__(
+        self,
+        api_url: str = "https://sall.cc",
+        username: str = "",
+        password: str = "",
+        session_token: str = "",
+        proxy: str = None,
+    ):
+        self.api = _normalize_api_base_url(api_url, default="https://sall.cc", label="MoeMail API URL")
         self.proxy = {"http": proxy, "https": proxy} if proxy else None
-        self._session_token = None
+        self._configured_username = str(username or "").strip()
+        self._configured_password = str(password or "")
+        self._configured_session_token = str(session_token or "").strip()
+        self._session_token = self._configured_session_token or None
         self._email = None
+        self._session = None
+        self._username = self._configured_username
+        self._password = self._configured_password
 
-    def _register_and_login(self) -> str:
-        import requests, random, string
+    def _new_session(self):
+        import requests
+
         s = requests.Session()
         s.proxies = self.proxy
+        s.verify = False
         ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
         s.headers.update({"user-agent": ua, "origin": self.api, "referer": f"{self.api}/zh-CN/login"})
+        return s
+
+    def _extract_session_token(self, session) -> str:
+        for cookie in session.cookies:
+            if "session-token" in cookie.name:
+                return cookie.value
+        return ""
+
+    def _apply_session_token(self, session, token: str) -> None:
+        domain = urlparse(self.api).hostname or ""
+        cookie_names = [
+            "__Secure-authjs.session-token",
+            "authjs.session-token",
+            "__Secure-next-auth.session-token",
+            "next-auth.session-token",
+        ]
+        for name in cookie_names:
+            session.cookies.set(name, token, domain=domain, path="/")
+            session.cookies.set(name, token, path="/")
+
+    def _login_with_existing_account(self) -> str:
+        s = self._new_session()
+
+        if self._configured_session_token:
+            self._apply_session_token(s, self._configured_session_token)
+            self._session = s
+            self._session_token = self._configured_session_token
+            print("[MoeMail] 使用已提供的 session-token")
+            return self._configured_session_token
+
+        if not (self._configured_username and self._configured_password):
+            raise RuntimeError("MoeMail 未配置可复用账号，请提供用户名密码或 session-token")
+
+        csrf_r = s.get(f"{self.api}/api/auth/csrf", timeout=10)
+        csrf = csrf_r.json().get("csrfToken", "")
+        login_resp = s.post(
+            f"{self.api}/api/auth/callback/credentials",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            data=urlencode({
+                "username": self._configured_username,
+                "password": self._configured_password,
+                "csrfToken": csrf,
+                "redirect": "false",
+                "callbackUrl": self.api,
+            }),
+            allow_redirects=True,
+            timeout=15,
+        )
+        self._session = s
+        self._username = self._configured_username
+        self._password = self._configured_password
+        token = self._extract_session_token(s)
+        if token:
+            self._session_token = token
+            print("[MoeMail] 使用手动注册账号登录成功")
+            return token
+        raise RuntimeError(
+            f"MoeMail 登录失败: 已提供用户名密码，但未获取到 session-token (HTTP {login_resp.status_code})"
+        )
+
+    def _ensure_session(self) -> str:
+        if self._session_token and self._session is not None:
+            return self._session_token
+        if self._configured_session_token or self._configured_username:
+            return self._login_with_existing_account()
+        return self._register_and_login()
+
+    def _register_and_login(self) -> str:
+        import random, string
+
+        s = self._new_session()
         # 注册
         username = "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
         password = "Test" + "".join(random.choices(string.digits, k=8)) + "!"
+        self._username = username
+        self._password = password
         print(f"[MoeMail] 注册账号: {username} / {password}")
         r_reg = s.post(f"{self.api}/api/auth/register",
             json={"username": username, "password": password, "turnstileToken": ""},
             timeout=15)
         print(f"[MoeMail] 注册结果: {r_reg.status_code} {r_reg.text[:80]}")
+        if r_reg.status_code >= 400:
+            try:
+                register_error = r_reg.json().get("error") or r_reg.text
+            except Exception:
+                register_error = r_reg.text
+            raise RuntimeError(f"MoeMail 注册失败: {str(register_error).strip() or f'HTTP {r_reg.status_code}'}")
         # 获取 CSRF
         csrf_r = s.get(f"{self.api}/api/auth/csrf", timeout=10)
         csrf = csrf_r.json().get("csrfToken", "")
         # 登录
-        s.post(f"{self.api}/api/auth/callback/credentials",
+        login_resp = s.post(f"{self.api}/api/auth/callback/credentials",
             headers={"content-type": "application/x-www-form-urlencoded"},
-            data=f"username={username}&password={password}&csrfToken={csrf}&redirect=false&callbackUrl={self.api}",
+            data=urlencode({
+                "username": username,
+                "password": password,
+                "csrfToken": csrf,
+                "redirect": "false",
+                "callbackUrl": self.api,
+            }),
             allow_redirects=True, timeout=15)
         self._session = s
-        for cookie in s.cookies:
-            if "session-token" in cookie.name:
-                self._session_token = cookie.value
-                print(f"[MoeMail] 登录成功")
-                return cookie.value
+        token = self._extract_session_token(s)
+        if token:
+            self._session_token = token
+            print(f"[MoeMail] 登录成功")
+            return token
         print(f"[MoeMail] 登录失败，cookies: {[c.name for c in s.cookies]}")
-        return ""
+        raise RuntimeError(
+            f"MoeMail 登录失败: 未获取到 session-token (HTTP {login_resp.status_code})"
+        )
+
+    # 优先用这些域名（信誉较好，不易被 AWS/Google 等拒绝）
+    _PREFERRED_DOMAINS = ("sall.cc", "cnmlgb.de", "zhooo.org", "coolkid.icu")
 
     def get_email(self) -> MailboxAccount:
-        # 每次调用都重新注册新账号，保证邮箱唯一
-        self._session_token = None
-        self._register_and_login()
+        self._session_token = self._configured_session_token or None
+        self._session = None
+        self._ensure_session()
         import random, string
         name = "".join(random.choices(string.ascii_letters + string.digits, k=8))
-        # 获取可用域名列表，随机选一个
+        # 获取可用域名列表，优先选信誉好的域名，避免被 AWS 等平台拒绝
         domain = "sall.cc"
         try:
             cfg_r = self._session.get(f"{self.api}/api/config", timeout=10)
-            domains = [d.strip() for d in cfg_r.json().get("emailDomains", "sall.cc").split(",") if d.strip()]
-            if domains:
-                domain = random.choice(domains)
+            all_domains = [d.strip() for d in cfg_r.json().get("emailDomains", "sall.cc").split(",") if d.strip()]
+            if all_domains:
+                # 从可用域名中筛选优先域名，按 _PREFERRED_DOMAINS 顺序选择
+                preferred = [d for d in self._PREFERRED_DOMAINS if d in all_domains]
+                if preferred:
+                    domain = random.choice(preferred)
+                else:
+                    # 无优先域名可用，从剩余中随机选
+                    domain = random.choice(all_domains)
         except Exception:
             pass
         r = self._session.post(f"{self.api}/api/emails/generate",
@@ -507,9 +930,44 @@ class MoeMailMailbox(BaseMailbox):
         print(f"[MoeMail] 生成邮箱: {self._email} id={email_id} domain={domain} status={r.status_code}")
         if not email_id:
             print(f"[MoeMail] 生成失败: {data}")
-        if email_id:
-            self._email_count = getattr(self, '_email_count', 0) + 1
-        return MailboxAccount(email=self._email, account_id=str(email_id))
+            generate_error = data.get("error") or data.get("message") or r.text
+            raise RuntimeError(f"MoeMail 生成邮箱失败: {str(generate_error).strip() or f'HTTP {r.status_code}'}")
+        if not self._email:
+            raise RuntimeError("MoeMail 生成邮箱失败: 返回结果缺少 email")
+        self._email_count = getattr(self, '_email_count', 0) + 1
+        return MailboxAccount(
+            email=self._email,
+            account_id=str(email_id),
+            extra={
+                "provider_account": {
+                    "provider_type": "mailbox",
+                    "provider_name": "moemail",
+                    "login_identifier": getattr(self, "_username", ""),
+                    "display_name": getattr(self, "_username", "") or self._email,
+                    "credentials": {
+                        "username": getattr(self, "_username", ""),
+                        "password": getattr(self, "_password", ""),
+                        "session_token": self._session_token,
+                    },
+                    "metadata": {
+                        "api_url": self.api,
+                        "email": self._email,
+                    },
+                },
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "moemail",
+                    "resource_type": "mailbox",
+                    "resource_identifier": str(email_id),
+                    "handle": self._email,
+                    "display_name": self._email,
+                    "metadata": {
+                        "email": self._email,
+                        "api_url": self.api,
+                    },
+                },
+            },
+        )
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         try:
@@ -540,11 +998,41 @@ class MoeMailMailbox(BaseMailbox):
                         m = pattern.search(body)
                     else:
                         m = re.search(code_pattern or r'(?<!#)(?<!\d)(\d{6})(?!\d)', body)
-                    if m: return m.group(0) if code_pattern else m.group(1)
+                    if m: return m.group(1) if m.groups() else m.group(0) if code_pattern else m.group(1)
             except Exception:
                 pass
             time.sleep(3)
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None) -> str:
+        import time
+        seen = set(before_ids or [])
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                r = self._session.get(f"{self.api}/api/emails/{account.account_id}",
+                    timeout=10)
+                msgs = r.json().get("messages", [])
+                for msg in msgs:
+                    mid = str(msg.get("id", ""))
+                    if not mid or mid in seen:
+                        continue
+                    seen.add(mid)
+                    body = (
+                        str(msg.get("content") or "") + " " +
+                        str(msg.get("text") or "") + " " +
+                        str(msg.get("body") or "") + " " +
+                        str(msg.get("html") or "") + " " +
+                        str(msg.get("subject") or "")
+                    )
+                    link = _extract_verification_link(body, keyword)
+                    if link:
+                        return link
+            except Exception:
+                pass
+            time.sleep(3)
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
 
 
 class FreemailMailbox(BaseMailbox):
@@ -587,7 +1075,42 @@ class FreemailMailbox(BaseMailbox):
         email = data.get("email", "")
         self._email = email
         print(f"[Freemail] 生成邮箱: {email}")
-        return MailboxAccount(email=email, account_id=email)
+        provider_account = {
+            "provider_type": "mailbox",
+            "provider_name": "freemail",
+            "login_identifier": self.username or email,
+            "display_name": self.username or email,
+            "credentials": {},
+            "metadata": {
+                "api_url": self.api,
+                "auth_mode": "admin_token" if self.admin_token else "username_password",
+            },
+        }
+        if self.admin_token:
+            provider_account["credentials"]["admin_token"] = self.admin_token
+        if self.username:
+            provider_account["credentials"]["username"] = self.username
+        if self.password:
+            provider_account["credentials"]["password"] = self.password
+        return MailboxAccount(
+            email=email,
+            account_id=email,
+            extra={
+                "provider_account": provider_account,
+                "provider_resource": {
+                    "provider_type": "mailbox",
+                    "provider_name": "freemail",
+                    "resource_type": "mailbox",
+                    "resource_identifier": email,
+                    "handle": email,
+                    "display_name": email,
+                    "metadata": {
+                        "email": email,
+                        "api_url": self.api,
+                    },
+                },
+            },
+        )
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         try:
@@ -621,171 +1144,30 @@ class FreemailMailbox(BaseMailbox):
             except Exception:
                 pass
             time.sleep(3)
-        return ""
+        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
-
-class MailTmMailbox(BaseMailbox):
-    """Mail.tm 免费临时邮箱"""
-    API = "https://api.mail.tm"
-
-    def __init__(self, proxy: str = None):
-        self.proxy = {"http": proxy, "https": proxy} if proxy else None
-        self._email = None
-        self._token = None
-
-    def _req(self):
-        import requests
-        s = requests.Session()
-        if self.proxy:
-            s.proxies = self.proxy
-        if self._token:
-            s.headers["Authorization"] = f"Bearer {self._token}"
-        return s
-
-    def get_email(self) -> MailboxAccount:
-        import requests, random, string
-        s = self._req()
-        domains = s.get(f"{self.API}/domains", timeout=15).json()
-        domain = domains["hydra:member"][0]["domain"]
-        name = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
-        addr = f"{name}@{domain}"
-        pwd = "Tmp" + "".join(random.choices(string.ascii_letters + string.digits, k=10))
-        s.post(f"{self.API}/accounts",
-               json={"address": addr, "password": pwd}, timeout=15)
-        r = s.post(f"{self.API}/token",
-                   json={"address": addr, "password": pwd}, timeout=15)
-        self._token = r.json().get("token", "")
-        self._email = addr
-        self._pwd = pwd
-        return MailboxAccount(email=addr, account_id=addr, extra={"password": pwd})
-
-    def get_current_ids(self, account: MailboxAccount) -> set:
-        try:
-            r = self._req().get(f"{self.API}/messages", timeout=10)
-            return {str(m["id"]) for m in r.json().get("hydra:member", [])}
-        except Exception:
-            return set()
-
-    def wait_for_code(self, account: MailboxAccount, keyword: str = "",
+    def wait_for_link(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None) -> str:
-        import re, time
+        import time
         seen = set(before_ids or [])
         start = time.time()
         while time.time() - start < timeout:
             try:
-                msgs = self._req().get(f"{self.API}/messages", timeout=10).json().get("hydra:member", [])
-                for msg in msgs:
+                r = self._session.get(f"{self.api}/api/emails",
+                    params={"mailbox": account.email, "limit": 20}, timeout=10)
+                for msg in r.json():
                     mid = str(msg.get("id", ""))
                     if not mid or mid in seen:
                         continue
-                    # 获取完整邮件内容
-                    full = self._req().get(f"{self.API}/messages/{mid}", timeout=10).json()
                     seen.add(mid)
-                    text = full.get("text", "") + " " + full.get("subject", "")
-                    m = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
-                    if m:
-                        return m.group(1)
+                    text = " ".join(
+                        str(msg.get(key, ""))
+                        for key in ("preview", "subject", "html", "text", "content", "body")
+                    )
+                    link = _extract_verification_link(text, keyword)
+                    if link:
+                        return link
             except Exception:
                 pass
             time.sleep(3)
-        return ""
-
-
-
-class AutoTempMailMailbox(BaseMailbox):
-    """AutoTempMail 自建临时邮箱服务（基于 Cloudflare Email Routing）
-
-    部署文档：https://github.com/autotempmail/autotempmail
-    API 接口：
-      POST /api/inboxes/random  -> 生成随机邮箱
-      GET  /api/inboxes/{addr}/otp -> 获取最新 OTP
-    """
-
-    def __init__(self, api_url: str, admin_token: str = "",
-                 domain: str = "", proxy: str = None):
-        self.api = api_url.rstrip("/")
-        self.admin_token = admin_token
-        self.domain = domain
-        self.proxy = {"http": proxy, "https": proxy} if proxy else None
-
-    def _headers(self) -> dict:
-        h = {
-            "accept": "application/json",
-            "content-type": "application/json",
-        }
-        if self.admin_token:
-            h["x-admin-auth"] = self.admin_token
-        return h
-
-    def get_email(self) -> MailboxAccount:
-        import requests
-        payload = {}
-        if self.domain:
-            payload["domain"] = self.domain
-        r = requests.post(
-            f"{self.api}/api/inboxes/random",
-            json=payload,
-            headers=self._headers(),
-            proxies=self.proxy,
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        address = data.get("address", "")
-        print(f"[AutoTempMail] 生成邮箱: {address}")
-        return MailboxAccount(email=address, account_id=address)
-
-    def get_current_ids(self, account: MailboxAccount) -> set:
-        import requests
-        try:
-            r = requests.get(
-                f"{self.api}/api/inboxes/{account.email}/messages",
-                headers=self._headers(),
-                proxies=self.proxy,
-                timeout=10,
-            )
-            data = r.json()
-            return {str(m.get("id", "")) for m in data.get("items", [])}
-        except Exception:
-            return set()
-
-    def wait_for_code(self, account: MailboxAccount, keyword: str = "",
-                      timeout: int = 120, before_ids: set = None) -> str:
-        import re
-        import time
-        import requests
-
-        seen = set(before_ids or [])
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                # 优先用 /otp 接口，直接返回解析好的验证码
-                r = requests.get(
-                    f"{self.api}/api/inboxes/{account.email}/otp",
-                    headers=self._headers(),
-                    proxies=self.proxy,
-                    timeout=10,
-                )
-                if r.status_code == 200:
-                    data = r.json()
-                    msg = data.get("message", {})
-                    mid = str(msg.get("id", ""))
-                    if mid and mid not in seen:
-                        seen.add(mid)
-                        otp_info = data.get("otp", {})
-                        if otp_info.get("found"):
-                            code = otp_info.get("primary", "")
-                            if code:
-                                print(f"[AutoTempMail] 获取到验证码: {code}")
-                                return code
-                        # fallback：自己从 text_body/subject 里提取
-                        text = msg.get("text_body", "") + " " + msg.get("subject", "")
-                        m = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
-                        if m:
-                            return m.group(1)
-            except Exception:
-                pass
-            time.sleep(3)
-        return ""
-
-
+        raise TimeoutError(f"等待验证链接超时 ({timeout}s)")

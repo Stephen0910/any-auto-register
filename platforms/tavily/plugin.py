@@ -2,6 +2,7 @@
 import random, string
 from core.base_platform import BasePlatform, Account, AccountStatus, RegisterConfig
 from core.base_mailbox import BaseMailbox
+from core.registration import BrowserRegistrationAdapter, LinkSpec, OtpSpec, ProtocolMailboxAdapter, ProtocolOAuthAdapter, RegistrationCapability, RegistrationResult
 from core.registry import register
 
 
@@ -11,62 +12,95 @@ class TavilyPlatform(BasePlatform):
     display_name = "Tavily"
     version = "1.0.0"
     supported_executors = ["protocol", "headless", "headed"]
+    supported_identity_modes = ["mailbox", "oauth_browser"]
+    supported_oauth_providers = ["google", "github", "linkedin", "microsoft"]
 
     def __init__(self, config: RegisterConfig = None, mailbox: BaseMailbox = None):
         super().__init__(config)
         self.mailbox = mailbox
 
-    def _register_browser(self, email: str, password: str) -> Account:
-        import sys, os, importlib, pathlib
-        extra = self.config.extra or {}
-        os.environ["LOCAL_SOLVER_URL"] = "http://127.0.0.1:8889"
-        os.environ["SOLVER_PORT"] = "8889"
-        os.environ["REGISTER_HEADLESS"] = "true"
-        if extra.get("duckmail_api_key"): os.environ["DUCKMAIL_API_KEY"] = extra["duckmail_api_key"]
-        if extra.get("duckmail_api_url"): os.environ["DUCKMAIL_API_URL"] = extra["duckmail_api_url"]
-        if extra.get("duckmail_domain"):  os.environ["DUCKMAIL_DOMAIN"]  = extra["duckmail_domain"]
-        tavily_gen_path = str(pathlib.Path(__file__).resolve().parents[3] / "tavily-key-generator")
-        if tavily_gen_path not in sys.path:
-            sys.path.insert(0, tavily_gen_path)
-        if "config" in sys.modules: importlib.reload(sys.modules["config"])
-        if "tavily_browser_solver" in sys.modules: importlib.reload(sys.modules["tavily_browser_solver"])
-        from tavily_browser_solver import register_with_browser_solver
-        api_key = register_with_browser_solver(email, password)
-        if not api_key:
-            raise RuntimeError("浏览器注册失败")
-        return Account(platform="tavily", email=email, password=password,
-                       status=AccountStatus.REGISTERED, extra={"api_key": api_key})
+    def _browser_registration_label(self, identity) -> str:
+        return getattr(identity, "email", "") or "(manual oauth)"
 
-    def register(self, email: str, password: str = None) -> Account:
-        if not password:
-            password = "".join(random.choices(string.ascii_letters + string.digits + "!@#", k=14))
-        log = getattr(self, '_log_fn', print)
+    def _prepare_registration_password(self, password: str | None) -> str | None:
+        if password:
+            return password
+        return "".join(random.choices(string.ascii_letters + string.digits + "!@#", k=14))
 
-        if (self.config.executor_type or "") in ("headless", "headed"):
-            log(f"使用浏览器模式注册: {email}")
-            return self._register_browser(email, password)
+    def _map_tavily_result(self, result: dict) -> RegistrationResult:
+        return RegistrationResult(
+            email=result["email"],
+            password=result["password"],
+            status=AccountStatus.REGISTERED,
+            extra={"api_key": result["api_key"]},
+        )
 
-        mail_acct = self.mailbox.get_email() if self.mailbox else None
-        email = email or (mail_acct.email if mail_acct else None)
-        log(f"邮箱: {email}")
-        before_ids = self.mailbox.get_current_ids(mail_acct) if mail_acct else set()
+    def _browser_preflight(self, ctx) -> None:
+        if ctx.identity.identity_provider == "mailbox" and ctx.platform._resolve_captcha_solver() == "local_solver":
+            from services.solver_manager import start
 
-        def otp_cb():
-            log("等待验证码邮件...")
-            code = self.mailbox.wait_for_code(mail_acct, keyword="", before_ids=before_ids)
-            if code: log(f"验证码: {code}")
-            return code
+            start()
 
-        captcha = self._make_captcha(key=self.config.extra.get("yescaptcha_key", ""))
+    def build_browser_registration_adapter(self):
+        return BrowserRegistrationAdapter(
+            result_mapper=lambda ctx, result: self._map_tavily_result(result),
+            browser_worker_builder=lambda ctx, artifacts: __import__("platforms.tavily.browser_register", fromlist=["TavilyBrowserRegister"]).TavilyBrowserRegister(
+                captcha=artifacts.captcha_solver if ctx.identity.identity_provider == "mailbox" else None,
+                headless=(ctx.executor_type == "headless"),
+                proxy=ctx.proxy,
+                otp_callback=artifacts.otp_callback,
+                verification_link_callback=artifacts.verification_link_callback,
+                api_key_timeout=int(ctx.extra.get("api_key_timeout", 20) or 20),
+                log_fn=ctx.log,
+            ),
+            browser_register_runner=lambda worker, ctx, artifacts: worker.run(
+                email=ctx.identity.email,
+                password=ctx.password,
+            ),
+            oauth_runner=self._run_browser_oauth,
+            capability=RegistrationCapability(oauth_allowed_executor_types=("headed",)),
+            otp_spec=OtpSpec(wait_message="等待验证码邮件..."),
+            link_spec=LinkSpec(wait_message="等待验证链接邮件..."),
+            use_captcha_for_mailbox=True,
+            preflight=self._browser_preflight,
+        )
 
-        from platforms.tavily.core import TavilyRegister
-        with self._make_executor() as ex:
-            reg = TavilyRegister(executor=ex, captcha=captcha, log_fn=log)
-            result = reg.register(email=email, password=password,
-                                  otp_callback=otp_cb if self.mailbox else None)
+    def _run_browser_oauth(self, ctx) -> dict:
+        from platforms.tavily.browser_oauth import register_with_browser_oauth
 
-        return Account(platform="tavily", email=result["email"], password=result["password"],
-                       status=AccountStatus.REGISTERED, extra={"api_key": result["api_key"]})
+        return register_with_browser_oauth(
+            proxy=ctx.proxy,
+            oauth_provider=ctx.identity.oauth_provider,
+            email_hint=ctx.identity.email,
+            timeout=int(ctx.extra.get("browser_oauth_timeout", ctx.extra.get("manual_oauth_timeout", 300)) or 300),
+            log_fn=ctx.log,
+            chrome_user_data_dir=ctx.identity.chrome_user_data_dir,
+            chrome_cdp_url=ctx.identity.chrome_cdp_url,
+        )
+
+    def build_protocol_oauth_adapter(self):
+        return ProtocolOAuthAdapter(
+            oauth_runner=lambda ctx: (_ for _ in ()).throw(RuntimeError("Tavily 当前仅浏览器模式支持 oauth_browser，请使用 executor_type=headed")),
+            result_mapper=lambda ctx, result: self._map_tavily_result(result),
+        )
+
+    def build_protocol_mailbox_adapter(self):
+        return ProtocolMailboxAdapter(
+            result_mapper=lambda ctx, result: self._map_tavily_result(result),
+            worker_builder=lambda ctx, artifacts: __import__("platforms.tavily.protocol_mailbox", fromlist=["TavilyProtocolMailboxWorker"]).TavilyProtocolMailboxWorker(
+                executor=artifacts.executor,
+                captcha=artifacts.captcha_solver,
+                log_fn=ctx.log,
+            ),
+            register_runner=lambda worker, ctx, artifacts: worker.run(
+                email=ctx.identity.email,
+                password=ctx.password,
+                otp_callback=artifacts.otp_callback,
+            ),
+            otp_spec=OtpSpec(wait_message="等待验证码邮件..."),
+            use_captcha=True,
+            use_executor=True,
+        )
 
     def check_valid(self, account: Account) -> bool:
         api_key = account.extra.get("api_key", "")

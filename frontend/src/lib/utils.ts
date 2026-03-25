@@ -5,8 +5,8 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export const API = '/api'
-export const API_BASE = '/api'
+export const API = import.meta.env.VITE_API_BASE || '/api'
+export const API_BASE = API
 
 export async function apiFetch(path: string, opts?: RequestInit) {
   const res = await fetch(API + path, {
@@ -15,4 +15,29 @@ export async function apiFetch(path: string, opts?: RequestInit) {
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+export async function apiDownload(path: string, opts?: RequestInit) {
+  const res = await fetch(API + path, {
+    headers: {
+      ...(opts?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(opts?.headers || {}),
+    },
+    ...opts,
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const blob = await res.blob()
+  const disposition = res.headers.get('Content-Disposition') || ''
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/)
+  const filename = decodeURIComponent(match?.[1] || match?.[2] || 'download')
+  return { blob, filename }
+}
+
+export function triggerBrowserDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
 }

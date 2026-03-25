@@ -1,78 +1,59 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlmodel import Session, select
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
-from core.db import ProxyModel, get_session
-from core.proxy_pool import proxy_pool
+
+from application.proxies import ProxiesService
+from domain.proxies import ProxyBulkCreateCommand, ProxyCreateCommand
 
 router = APIRouter(prefix="/proxies", tags=["proxies"])
+service = ProxiesService()
 
 
-class ProxyCreate(BaseModel):
+class ProxyCreateRequest(BaseModel):
     url: str
     region: str = ""
 
 
-class ProxyBulkCreate(BaseModel):
+class ProxyBulkCreateRequest(BaseModel):
     proxies: list[str]
     region: str = ""
 
 
 @router.get("")
-def list_proxies(session: Session = Depends(get_session)):
-    items = session.exec(select(ProxyModel)).all()
-    return items
+def list_proxies():
+    return service.list_proxies()
 
 
 @router.post("")
-def add_proxy(body: ProxyCreate, session: Session = Depends(get_session)):
-    existing = session.exec(select(ProxyModel).where(ProxyModel.url == body.url)).first()
-    if existing:
+def create_proxy(body: ProxyCreateRequest):
+    item = service.create_proxy(ProxyCreateCommand(url=body.url, region=body.region))
+    if not item:
         raise HTTPException(400, "代理已存在")
-    p = ProxyModel(url=body.url, region=body.region)
-    session.add(p)
-    session.commit()
-    session.refresh(p)
-    return p
+    return item
 
 
 @router.post("/bulk")
-def bulk_add_proxies(body: ProxyBulkCreate, session: Session = Depends(get_session)):
-    added = 0
-    for url in body.proxies:
-        url = url.strip()
-        if not url:
-            continue
-        existing = session.exec(select(ProxyModel).where(ProxyModel.url == url)).first()
-        if not existing:
-            session.add(ProxyModel(url=url, region=body.region))
-            added += 1
-    session.commit()
-    return {"added": added}
+def bulk_create_proxies(body: ProxyBulkCreateRequest):
+    return service.bulk_create_proxies(ProxyBulkCreateCommand(proxies=body.proxies, region=body.region))
 
 
 @router.delete("/{proxy_id}")
-def delete_proxy(proxy_id: int, session: Session = Depends(get_session)):
-    p = session.get(ProxyModel, proxy_id)
-    if not p:
+def delete_proxy(proxy_id: int):
+    result = service.delete_proxy(proxy_id)
+    if not result["ok"]:
         raise HTTPException(404, "代理不存在")
-    session.delete(p)
-    session.commit()
-    return {"ok": True}
+    return result
 
 
 @router.patch("/{proxy_id}/toggle")
-def toggle_proxy(proxy_id: int, session: Session = Depends(get_session)):
-    p = session.get(ProxyModel, proxy_id)
-    if not p:
+def toggle_proxy(proxy_id: int):
+    result = service.toggle_proxy(proxy_id)
+    if not result:
         raise HTTPException(404, "代理不存在")
-    p.is_active = not p.is_active
-    session.add(p)
-    session.commit()
-    return {"is_active": p.is_active}
+    return result
 
 
 @router.post("/check")
-def check_proxies(background_tasks: BackgroundTasks):
-    background_tasks.add_task(proxy_pool.check_all)
-    return {"message": "检测任务已启动"}
+def check_proxies():
+    return service.trigger_check()
