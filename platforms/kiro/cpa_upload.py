@@ -109,7 +109,7 @@ def upload_to_cpa(
             headers=headers,
             proxies=proxies,
             verify=False,
-            timeout=15,
+            timeout=60,
             impersonate="chrome110",
         )
         if resp.status_code == 409:
@@ -178,7 +178,7 @@ def test_cpa_connection(api_url: str, api_token: str, proxy: str = None) -> Tupl
             headers=headers,
             proxies=proxies,
             verify=False,
-            timeout=10,
+            timeout=30,
             impersonate="chrome110",
         )
         if resp.status_code in (200, 204, 401, 403, 405):
