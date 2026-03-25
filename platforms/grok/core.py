@@ -81,7 +81,7 @@ class GrokRegister:
         body = _pb_string(1, email) + _pb_string(2, code)
         resp = self._grpc_post('/auth_mgmt.AuthManagement/VerifyEmailValidationCode', body)
         ok = b'grpc-status:0' in resp
-        self.log(f"  校验: {'OK' if ok else 'FAIL'}")
+        self.log(f"  校验: {'OK' if ok else 'FAIL'} resp[:200]={resp[:200]}")
         return ok
 
     def step3_signup(self, email: str, password: str, code: str,
@@ -106,17 +106,25 @@ class GrokRegister:
                      'referer': 'https://accounts.x.ai/sign-up'},
             json=payload)
         self.log(f"  sign-up status={r.status_code}")
+        self.log(f"  sign-up body[:800]: {r.text[:800]}")
+        self.log(f"  sign-up headers set-cookie: {r.headers.get('set-cookie', 'NONE')}")
+        self.log(f"  session cookies after step3: {dict(self.s.cookies)}")
         return r.text
 
     def step4_set_cookies(self, signup_body: str):
         self.log("Step4: 设置 session cookies...")
         urls = re.findall(r'https://auth\.[^"\s\\]+/set-cookie[^"\s\\]*', signup_body)
+        self.log(f"  找到 set-cookie URL 数量: {len(urls)}")
+        if not urls:
+            # 打印 signup_body 前500字符帮助诊断
+            self.log(f"  signup_body[:500]: {signup_body[:500]}")
         for url in urls:
             url = url.replace('\\u0026', '&').replace('\\u003d', '=')
             self.log(f"  {url[:70]}...")
-            self.s.get(url, headers={'user-agent': UA, 'accept': 'text/html',
+            resp = self.s.get(url, headers={'user-agent': UA, 'accept': 'text/html',
                                      'referer': 'https://accounts.x.ai/'},
                        allow_redirects=True)
+            self.log(f"  set-cookie resp status={resp.status_code} cookies={list(dict(resp.cookies).keys())}")
 
     def register(self, email: str, password: str = None,
                  otp_callback=None) -> dict:
@@ -134,7 +142,7 @@ class GrokRegister:
         signup_body = self.step3_signup(email, password, code, given_name, family_name)
         self.step4_set_cookies(signup_body)
 
-        cookies = {c.name: c.value for c in self.s.cookies}
+        cookies = dict(self.s.cookies)
         sso = cookies.get('sso', '')
         if sso:
             self.log(f"  ✅ sso={sso[:40]}...")

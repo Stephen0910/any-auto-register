@@ -24,6 +24,10 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
     { label: '本地 Solver (Camoufox)', value: 'local_solver' },
     { label: '手动', value: 'manual' },
   ],
+  kiro_cpa_auto_upload: [
+    { label: '开启', value: 'true' },
+    { label: '关闭', value: 'false' },
+  ],
 }
 
 const TABS = [
@@ -121,6 +125,19 @@ const TABS = [
       ],
     }],
   },
+  {
+    id: 'kiro', label: 'Kiro', icon: Shield,
+    sections: [{
+      section: 'Kiro CPA 上传',
+      desc: '注册成功后自动上传到 CPA 管理平台（留空则使用全局 CPA 配置）',
+      items: [
+        { key: 'kiro_cpa_auto_upload', label: '自动上传' },
+        { key: 'kiro_cpa_profile_id', label: '上传站点' },
+        { key: 'kiro_cpa_api_url', label: 'API URL', placeholder: '留空使用全局 CPA URL' },
+        { key: 'kiro_cpa_api_key', label: 'API Key', placeholder: '留空使用全局 CPA Key', secret: true },
+      ],
+    }],
+  },
 ]
 
 function Field({ field, form, setForm, showSecret, setShowSecret }: any) {
@@ -169,8 +186,26 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [solverRunning, setSolverRunning] = useState<boolean | null>(null)
+  const [cpaTestResult, setCpaTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [cpaTestLoading, setCpaTestLoading] = useState(false)
 
   useEffect(() => { apiFetch('/config').then(setForm) }, [])
+
+  // 加载 8899 CPA profiles 作为下拉选项
+  useEffect(() => {
+    apiFetch('/kiro-cpa/profiles')
+      .then((data: any) => {
+        if (data.profiles && data.profiles.length > 0) {
+          const opts = data.profiles.map((p: any) => ({ label: p.name, value: p.id }))
+          SELECT_FIELDS['kiro_cpa_profile_id'] = [{ label: '（使用全局 CPA 配置）', value: '' }, ...opts]
+          // 若未配置，默认选中 active profile
+          if (data.active) {
+            setForm(f => ({ ...f, kiro_cpa_profile_id: f.kiro_cpa_profile_id || data.active }))
+          }
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const checkSolver = async () => {
     try { const d = await apiFetch('/solver/status'); setSolverRunning(d.running) }
@@ -255,6 +290,52 @@ export default function Settings() {
             <Save className="h-4 w-4 mr-2" />
             {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}
           </Button>
+
+          {/* Kiro CPA 测试连接按钮 */}
+          {activeTab === 'kiro' && (
+            <div className="space-y-2">
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={cpaTestLoading}
+                onClick={async () => {
+                  setCpaTestLoading(true)
+                  setCpaTestResult(null)
+                  try {
+                    const apiUrl = form.kiro_cpa_api_url || form.cpa_api_url || ''
+                    const apiKey = form.kiro_cpa_api_key || form.cpa_api_key || ''
+                    const res = await apiFetch('/kiro-cpa/test', {
+                      method: 'POST',
+                      body: JSON.stringify({ api_url: apiUrl, api_key: apiKey }),
+                    })
+                    setCpaTestResult({ ok: res.ok, message: res.message })
+                  } catch (e: any) {
+                    setCpaTestResult({ ok: false, message: e.message || '请求失败' })
+                  } finally {
+                    setCpaTestLoading(false)
+                  }
+                }}
+              >
+                {cpaTestLoading
+                  ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  : <CheckCircle className="h-4 w-4 mr-2" />}
+                测试 CPA 连接
+              </Button>
+              {cpaTestResult && (
+                <div className={cn(
+                  'flex items-center gap-2 text-sm px-3 py-2 rounded-lg border',
+                  cpaTestResult.ok
+                    ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                    : 'text-red-400 border-red-500/30 bg-red-500/10'
+                )}>
+                  {cpaTestResult.ok
+                    ? <CheckCircle className="h-4 w-4 shrink-0" />
+                    : <XCircle className="h-4 w-4 shrink-0" />}
+                  {cpaTestResult.message}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

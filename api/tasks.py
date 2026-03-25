@@ -68,26 +68,42 @@ def _save_task_log(platform: str, email: str, status: str,
 
 
 def _auto_upload_cpa(task_id: str, account):
-    """注册成功后自动上传 CPA（仅 chatgpt 平台，且已配置时）"""
-    if getattr(account, "platform", "") != "chatgpt":
-        return
+    """注册成功后自动上传 CPA（支持 chatgpt / kiro 平台）"""
+    platform = getattr(account, "platform", "")
+    extra = getattr(account, "extra", {}) or {}
+
     try:
         from core.config_store import config_store
-        cpa_url = config_store.get("cpa_api_url", "")
-        if cpa_url:
-            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
 
+        if platform == "chatgpt":
+            cpa_url = config_store.get("cpa_api_url", "")
+            if not cpa_url:
+                return
+            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
             class _A: pass
             a = _A()
             a.email = account.email
-            extra = account.extra or {}
             a.access_token = extra.get("access_token") or account.token
             a.refresh_token = extra.get("refresh_token", "")
             a.id_token = extra.get("id_token", "")
-
             token_data = generate_token_json(a)
             ok, msg = upload_to_cpa(token_data)
             _log(task_id, f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+
+        elif platform == "kiro":
+            # 优先读 kiro 专用配置，回退到全局 CPA 配置
+            # 检查 auto_upload 开关（默认开启）
+            auto_upload = config_store.get("kiro_cpa_auto_upload", "true")
+            if auto_upload.lower() == "false":
+                return
+            cpa_url = config_store.get("kiro_cpa_api_url", "") or config_store.get("cpa_api_url", "")
+            if not cpa_url:
+                return
+            from platforms.kiro.cpa_upload import generate_token_json, upload_to_cpa
+            token_data = generate_token_json(account)
+            ok, msg = upload_to_cpa(token_data)
+            _log(task_id, f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+
     except Exception as e:
         _log(task_id, f"  [CPA] 自动上传异常: {e}")
 

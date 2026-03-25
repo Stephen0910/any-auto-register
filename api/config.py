@@ -15,6 +15,7 @@ CONFIG_KEYS = [
     "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
     "autotempmail_api_url", "autotempmail_admin_token", "autotempmail_domain",
     "cpa_api_url", "cpa_api_key",
+    "kiro_cpa_api_url", "kiro_cpa_api_key", "kiro_cpa_auto_upload", "kiro_cpa_profile_id",
     "team_manager_url", "team_manager_key",
 ]
 

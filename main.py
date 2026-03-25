@@ -13,6 +13,7 @@ from api.platforms import router as platforms_router
 from api.proxies import router as proxies_router
 from api.config import router as config_router
 from api.actions import router as actions_router
+from api.kiro_cpa import router as kiro_cpa_router
 
 
 @asynccontextmanager
@@ -48,6 +49,7 @@ app.include_router(platforms_router, prefix="/api")
 app.include_router(proxies_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(actions_router, prefix="/api")
+app.include_router(kiro_cpa_router, prefix="/api")
 
 # 挂载前端静态文件
 _dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
