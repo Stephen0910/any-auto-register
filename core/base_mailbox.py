@@ -717,6 +717,20 @@ class CFWorkerMailbox(BaseMailbox):
                     code_m = re.search(r'<span[^>]*>\s*(\d{6})\s*</span>', raw)
                     if code_m:
                         return code_m.group(1)
+                    # 1b. 解码 base64 编码的邮件体（AWS 等使用 base64 编码）
+                    import base64 as _b64
+                    b64_blocks = re.findall(r'Content-Transfer-Encoding: base64[\r\n]+([A-Za-z0-9+/=\r\n]+)', raw)
+                    decoded_parts = []
+                    for blk in b64_blocks:
+                        try:
+                            decoded_parts.append(_b64.b64decode(blk.replace('\r\n', '').replace('\n', '')).decode('utf-8', 'ignore'))
+                        except Exception:
+                            pass
+                    decoded_text = '\n'.join(decoded_parts)
+                    if decoded_text:
+                        m = re.search(code_pattern or r'(?<!\d)(\d{6})(?!\d)', decoded_text)
+                        if m:
+                            return m.group(1) if m.groups() else m.group(0)
                     # 2. 跳过 MIME header，只搜 body 部分，避免匹配时间戳
                     body_start = raw.find('\r\n\r\n')
                     search_text = raw[body_start:] if body_start != -1 else raw
