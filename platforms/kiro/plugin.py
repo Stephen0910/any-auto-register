@@ -119,6 +119,7 @@ class KiroPlatform(BasePlatform):
             otp_spec=OtpSpec(
                 wait_message="等待验证码...",
                 timeout=resolve_timeout(self.config.extra or {}, ("otp_timeout",), 120),
+                code_pattern=r'verification code(?:\s+is)?[:：]?\s*(\d{6})',
             ),
         )
 

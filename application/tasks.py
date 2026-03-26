@@ -500,6 +500,22 @@ def _build_platform_instance(platform_name: str, payload: dict[str, Any], logger
     executor_type = str(payload.get("executor_type", "protocol") or "protocol")
     captcha_solver = str(payload.get("captcha_solver", "auto") or "auto")
     extra = dict(payload.get("extra") or {})
+    # 把全局 config_store 的 mail 配置注入 extra（extra 里的优先级更高）
+    try:
+        from core.config_store import config_store as _cs
+        _mail_keys = [
+            "mail_provider", "cfworker_api_url", "cfworker_admin_token", "cfworker_domain",
+            "cfworker_fingerprint", "moemail_api_url", "laoudo_account_id",
+            "duckmail_api_url", "duckmail_bearer", "tempmail_lol_api_url",
+            "freemail_api_url", "freemail_admin_token", "freemail_username", "freemail_password",
+        ]
+        for _k in _mail_keys:
+            if _k not in extra or not extra[_k]:
+                _v = _cs.get(_k, "")
+                if _v:
+                    extra[_k] = _v
+    except Exception:
+        pass
     config = RegisterConfig(
         executor_type=executor_type,
         captcha_solver=captcha_solver,
