@@ -751,7 +751,8 @@ function ActionMenu({
       )}
       <button onClick={onDetail} className="table-action-btn">详情</button>
       {acc.platform === 'kiro' && (
-        <button
+        <>
+          <button
           className="table-action-btn"
           disabled={running === '__cpa_upload__'}
           onClick={async () => {
@@ -771,6 +772,36 @@ function ActionMenu({
         >
           {running === '__cpa_upload__' ? '上传中...' : '上传CPA'}
         </button>
+        <button
+          className="table-action-btn"
+          disabled={running === '__kiro_check__'}
+          onClick={async () => {
+            setRunning('__kiro_check__')
+            try {
+              const res = await apiFetch(`/kiro-check/check`, {
+                method: 'POST',
+                body: JSON.stringify({ account_id: acc.id }),
+              })
+              const statusMap: Record<string, string> = {
+                valid: '✅ 有效',
+                suspended: '🚫 已封禁',
+                expired: '⏰ 已过期',
+                invalid: '❌ 无效',
+                error: '⚠️ 错误',
+                no_token: '⚠️ 无Token',
+              }
+              const label = statusMap[res.status] || res.status
+              setToast({ type: res.status === 'valid' ? 'success' : 'error', text: `${label}: ${res.detail || ''}` })
+            } catch (e: any) {
+              setToast({ type: 'error', text: e.message || '验证失败' })
+            } finally {
+              setRunning(null)
+            }
+          }}
+        >
+          {running === '__kiro_check__' ? '验证中...' : '验证'}
+        </button>
+        </>
       )}
       {actions.length > 0 && (
         <div className="relative" ref={menuRef}>
