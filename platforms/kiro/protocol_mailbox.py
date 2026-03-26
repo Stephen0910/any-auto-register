@@ -85,11 +85,12 @@ class KiroProtocolMailboxWorker:
                 "email": email,
                 "password": use_password,
                 "name": name,
-                "accessToken": tokens["accessToken"],
+                "accessToken": device_tokens["accessToken"],
                 "sessionToken": tokens["sessionToken"],
                 "clientId": device_tokens["clientId"],
                 "clientSecret": device_tokens["clientSecret"],
                 "refreshToken": device_tokens["refreshToken"],
+                "kiroAccessToken": tokens["accessToken"],
             }
 
         self.client.log("🎉 注册完成! (含 accessToken + sessionToken, 但 refreshToken 获取失败)")
