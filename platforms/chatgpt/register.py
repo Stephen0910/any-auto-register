@@ -490,10 +490,21 @@ class RegistrationEngine:
                     raise ValueError("unsupported_country")
                 return False
 
-            # 尝试从响应里提取 workspace_id
+            # 尝试从响应里提取 workspace_id 和页面类型
             try:
                 resp_json = response.json()
                 self._log(f"create_account 响应: {str(resp_json)[:300]}", "warning")
+                page_type = (resp_json.get("page") or {}).get("type", "")
+                # 如果要求绑定手机号，尝试跳过
+                if page_type == "add_phone":
+                    self._log("OpenAI 要求绑定手机号，尝试跳过...", "warning")
+                    skip_url = resp_json.get("continue_url") or ""
+                    if skip_url:
+                        skip_resp = self.session.get(
+                            skip_url,
+                            headers={"accept": "application/json", "referer": "https://auth.openai.com/add-phone"},
+                        )
+                        self._log(f"跳过 add-phone 响应: {skip_resp.status_code} {skip_resp.text[:300]}", "warning")
                 workspaces = resp_json.get("workspaces") or []
                 if workspaces:
                     wid = str((workspaces[0] or {}).get("id") or "").strip()
