@@ -490,6 +490,19 @@ class RegistrationEngine:
                     raise ValueError("unsupported_country")
                 return False
 
+            # 尝试从响应里提取 workspace_id
+            try:
+                resp_json = response.json()
+                self._log(f"create_account 响应: {str(resp_json)[:300]}", "warning")
+                workspaces = resp_json.get("workspaces") or []
+                if workspaces:
+                    wid = str((workspaces[0] or {}).get("id") or "").strip()
+                    if wid:
+                        self._workspace_id_from_create = wid
+                        self._log(f"从 create_account 响应拿到 workspace_id: {wid}")
+            except Exception as e:
+                self._log(f"解析 create_account 响应失败: {e}", "warning")
+
             return True
 
         except ValueError:
@@ -501,14 +514,15 @@ class RegistrationEngine:
     def _get_workspace_id(self) -> Optional[str]:
         """获取 Workspace ID"""
         try:
+            # 优先用 create_account 响应里已缓存的 workspace_id
+            if getattr(self, '_workspace_id_from_create', None):
+                self._log(f"使用缓存 workspace_id: {self._workspace_id_from_create}")
+                return self._workspace_id_from_create
+
             auth_cookie = self.session.cookies.get("oai-client-auth-session")
             if not auth_cookie:
                 self._log("未能获取到授权 Cookie", "error")
                 return None
-
-            # 打印原始 cookie 用于调试（截取前200字符）
-            self._log(f"oai-client-auth-session 原始值(前200): {auth_cookie[:200]}", "warning")
-            self._log(f"Cookie 包含 '.' 数量: {auth_cookie.count('.')}", "warning")
 
             # 解码 JWT
             import base64
@@ -516,39 +530,43 @@ class RegistrationEngine:
             import urllib.parse as _urlparse
 
             try:
-                # 先尝试整体 URL decode
                 cookie_decoded = _urlparse.unquote(auth_cookie)
                 segments = cookie_decoded.split(".")
-                self._log(f"Cookie segments 数量: {len(segments)}", "warning")
 
-                if len(segments) < 2:
-                    self._log("授权 Cookie 格式错误（非 JWT）", "error")
+                if len(segments) < 1:
+                    self._log("授权 Cookie 格式错误", "error")
                     return None
 
-                # 解码第二个 segment（payload）
-                payload = segments[1]
-                pad = "=" * ((4 - (len(payload) % 4)) % 4)
-                decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
-                self._log(f"base64 decoded(前100): {decoded[:100]}", "warning")
-                # 尝试 utf-8，失败则 latin-1（兼容任意单字节）
+                # 尝试每个 segment，找到含 workspaces 的 JSON
+                for i, seg in enumerate(segments):
+                    try:
+                        pad = "=" * ((4 - (len(seg) % 4)) % 4)
+                        decoded = base64.urlsafe_b64decode((seg + pad).encode("ascii"))
+                        try:
+                            auth_json = json_module.loads(decoded.decode("utf-8"))
+                        except (UnicodeDecodeError, json_module.JSONDecodeError):
+                            auth_json = None
+                        if auth_json and auth_json.get("workspaces"):
+                            self._log(f"在 segment[{i}] 找到 workspaces")
+                            workspaces = auth_json.get("workspaces") or []
+                            workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
+                            if workspace_id:
+                                self._log(f"Workspace ID: {workspace_id}")
+                                return workspace_id
+                    except Exception:
+                        continue
+
+                # 所有 segment 都没有 workspaces，打印 segment[0] 供调试
                 try:
-                    auth_json = json_module.loads(decoded.decode("utf-8"))
-                except UnicodeDecodeError:
-                    self._log(f"Cookie payload 非 UTF-8，尝试 latin-1 解码", "warning")
-                    auth_json = json_module.loads(decoded.decode("latin-1"))
+                    seg0 = segments[0]
+                    pad = "=" * ((4 - (len(seg0) % 4)) % 4)
+                    decoded0 = base64.urlsafe_b64decode((seg0 + pad).encode("ascii"))
+                    self._log(f"segment[0] 内容: {decoded0[:300]}", "warning")
+                except Exception:
+                    pass
 
-                workspaces = auth_json.get("workspaces") or []
-                if not workspaces:
-                    self._log("授权 Cookie 里没有 workspace 信息", "error")
-                    return None
-
-                workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
-                if not workspace_id:
-                    self._log("无法解析 workspace_id", "error")
-                    return None
-
-                self._log(f"Workspace ID: {workspace_id}")
-                return workspace_id
+                self._log("授权 Cookie 里没有 workspace 信息，尝试 /api/accounts API", "warning")
+                return self._get_workspace_id_from_api()
 
             except Exception as e:
                 self._log(f"解析授权 Cookie 失败: {e}", "error")
@@ -556,6 +574,30 @@ class RegistrationEngine:
 
         except Exception as e:
             self._log(f"获取 Workspace ID 失败: {e}", "error")
+            return None
+
+    def _get_workspace_id_from_api(self) -> Optional[str]:
+        """通过 API 获取 Workspace ID"""
+        try:
+            import json as json_module
+            response = self.session.get(
+                "https://auth.openai.com/api/accounts",
+                headers={"accept": "application/json"},
+            )
+            self._log(f"GET /api/accounts 状态: {response.status_code}", "warning")
+            if response.status_code == 200:
+                self._log(f"GET /api/accounts 响应: {response.text[:300]}", "warning")
+                data = response.json()
+                # 可能是列表或含 accounts/workspaces 字段
+                accounts = data if isinstance(data, list) else (data.get("accounts") or data.get("workspaces") or [])
+                if accounts:
+                    wid = str((accounts[0] or {}).get("id") or "").strip()
+                    if wid:
+                        self._log(f"从 /api/accounts 拿到 workspace_id: {wid}")
+                        return wid
+            return None
+        except Exception as e:
+            self._log(f"GET /api/accounts 失败: {e}", "error")
             return None
 
     def _select_workspace(self, workspace_id: str) -> Optional[str]:
