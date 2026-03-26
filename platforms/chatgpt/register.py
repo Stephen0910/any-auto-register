@@ -228,8 +228,8 @@ class RegistrationEngine:
                 allow_redirects=True,
                 timeout=30,
             )
-            cookie_names = [c.name for c in self.session.cookies]
-            has_login_session = any(c == "login_session" for c in cookie_names)
+            cookie_names = list(dict(self.session.cookies).keys())
+            has_login_session = "login_session" in cookie_names
             self._log(f"OAuth 预热状态: {resp.status_code}, login_session={'yes' if has_login_session else 'no'}")
             if not has_login_session:
                 self._log(f"未获取 login_session cookie: {cookie_names}", "warning")
