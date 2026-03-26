@@ -506,23 +506,30 @@ class RegistrationEngine:
                 self._log("未能获取到授权 Cookie", "error")
                 return None
 
+            # 打印原始 cookie 用于调试（截取前200字符）
+            self._log(f"oai-client-auth-session 原始值(前200): {auth_cookie[:200]}", "warning")
+            self._log(f"Cookie 包含 '.' 数量: {auth_cookie.count('.')}", "warning")
+
             # 解码 JWT
             import base64
             import json as json_module
+            import urllib.parse as _urlparse
 
             try:
-                segments = auth_cookie.split(".")
-                if len(segments) < 1:
-                    self._log("授权 Cookie 格式错误", "error")
+                # 先尝试整体 URL decode
+                cookie_decoded = _urlparse.unquote(auth_cookie)
+                segments = cookie_decoded.split(".")
+                self._log(f"Cookie segments 数量: {len(segments)}", "warning")
+
+                if len(segments) < 2:
+                    self._log("授权 Cookie 格式错误（非 JWT）", "error")
                     return None
 
                 # 解码第二个 segment（payload）
                 payload = segments[1]
-                # URL decode 先处理 %xx 编码
-                import urllib.parse as _urlparse
-                payload = _urlparse.unquote(payload)
                 pad = "=" * ((4 - (len(payload) % 4)) % 4)
                 decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
+                self._log(f"base64 decoded(前100): {decoded[:100]}", "warning")
                 # 尝试 utf-8，失败则 latin-1（兼容任意单字节）
                 try:
                     auth_json = json_module.loads(decoded.decode("utf-8"))
