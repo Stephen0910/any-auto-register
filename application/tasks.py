@@ -510,7 +510,7 @@ def _build_platform_instance(platform_name: str, payload: dict[str, Any], logger
             "freemail_api_url", "freemail_admin_token", "freemail_username", "freemail_password",
         ]
         for _k in _mail_keys:
-            if _k not in extra or not extra[_k]:
+            if _k not in extra or extra.get(_k) is None:
                 _v = _cs.get(_k, "")
                 if _v:
                     extra[_k] = _v

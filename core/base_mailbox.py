@@ -423,7 +423,10 @@ class TempMailLolMailbox(BaseMailbox):
                 r = requests.get(f"{self.api}/inbox",
                     params={"token": account.account_id},
                     proxies=self.proxy, timeout=10)
-                for mail in sorted(r.json().get("emails", []), key=lambda x: x.get("date", 0), reverse=True):
+                data = r.json()
+                emails = data.get("emails", [])
+                print(f"[TempMailLol.wait_for_code] email={account.email} count={len(emails)} expired={data.get('expired')}")
+                for mail in sorted(emails, key=lambda x: x.get("date", 0), reverse=True):
                     mid = str(mail.get("id", ""))
                     if mid in seen:
                         continue
