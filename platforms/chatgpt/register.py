@@ -303,13 +303,7 @@ class RegistrationEngine:
                 "referer": "https://auth.openai.com/create-account",
                 "accept": "application/json",
                 "content-type": "application/json",
-                "origin": "https://auth.openai.com",
-                "oai-device-id": did,
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
             }
-            headers.update(_generate_datadog_trace())
 
             if sen_token:
                 headers["openai-sentinel-token"] = sen_token
