@@ -217,14 +217,28 @@ class RegistrationEngine:
             self.oauth_start = self.oauth_manager.start_oauth()
             self._log(f"OAuth URL 已生成: {self.oauth_start.auth_url[:80]}...")
 
-            # 参考上游逻辑：先固定 oai-did，再访问 authorize 预热出 login_session
+            # 先固定 oai-did，再访问 authorize 预热出 login_session
             self.device_id = str(secrets.token_hex(16))
             self.session.cookies.set("oai-did", self.device_id, domain=".auth.openai.com")
             self.session.cookies.set("oai-did", self.device_id, domain="auth.openai.com")
 
+            _navigate_headers = {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "accept-language": "en-US,en;q=0.9",
+                "sec-ch-ua": '"Google Chrome";v="145", "Not?A_Brand";v="8", "Chromium";v="145"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "same-origin",
+                "sec-fetch-user": "?1",
+                "upgrade-insecure-requests": "1",
+                "referer": "https://auth.openai.com/",
+            }
+
             resp = self.session.get(
                 self.oauth_start.auth_url,
-                headers={"accept": "text/html,application/xhtml+xml,*/*", "referer": "https://auth.openai.com/"},
+                headers=_navigate_headers,
                 allow_redirects=True,
                 timeout=30,
             )
@@ -233,7 +247,7 @@ class RegistrationEngine:
             self._log(f"OAuth 预热状态: {resp.status_code}, login_session={'yes' if has_login_session else 'no'}")
             if not has_login_session:
                 self._log(f"未获取 login_session cookie: {cookie_names}", "warning")
-                return False
+                # 不直接 return False，继续尝试
             return True
         except Exception as e:
             self._log(f"生成 OAuth URL 失败: {e}", "error")
@@ -289,7 +303,11 @@ class RegistrationEngine:
                 "referer": "https://auth.openai.com/create-account",
                 "accept": "application/json",
                 "content-type": "application/json",
+                "origin": "https://auth.openai.com",
                 "oai-device-id": did,
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
             }
             headers.update(_generate_datadog_trace())
 
