@@ -465,7 +465,7 @@ class RegistrationEngine:
     def _create_user_account(self) -> bool:
         """创建用户账户"""
         try:
-            user_info = generate_random_user_info()
+            user_info = {"name": "Neo", "birthdate": "2000-02-20"}
             self._log(f"生成用户信息: {user_info['name']}, 生日: {user_info['birthdate']}")
             create_account_body = json.dumps(user_info)
 
@@ -537,36 +537,28 @@ class RegistrationEngine:
                     self._log("授权 Cookie 格式错误", "error")
                     return None
 
-                # 尝试每个 segment，找到含 workspaces 的 JSON
-                for i, seg in enumerate(segments):
-                    try:
-                        pad = "=" * ((4 - (len(seg) % 4)) % 4)
-                        decoded = base64.urlsafe_b64decode((seg + pad).encode("ascii"))
-                        try:
-                            auth_json = json_module.loads(decoded.decode("utf-8"))
-                        except (UnicodeDecodeError, json_module.JSONDecodeError):
-                            auth_json = None
-                        if auth_json and auth_json.get("workspaces"):
-                            self._log(f"在 segment[{i}] 找到 workspaces")
-                            workspaces = auth_json.get("workspaces") or []
-                            workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
-                            if workspace_id:
-                                self._log(f"Workspace ID: {workspace_id}")
-                                return workspace_id
-                    except Exception:
-                        continue
-
-                # 所有 segment 都没有 workspaces，打印 segment[0] 供调试
+                # 解码第一个 segment（index 0，数据在这里，不是 JWT 标准的 index 1）
+                payload = segments[0]
+                pad = "=" * ((4 - (len(payload) % 4)) % 4)
+                decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
                 try:
-                    seg0 = segments[0]
-                    pad = "=" * ((4 - (len(seg0) % 4)) % 4)
-                    decoded0 = base64.urlsafe_b64decode((seg0 + pad).encode("ascii"))
-                    self._log(f"segment[0] 内容: {decoded0[:300]}", "warning")
-                except Exception:
-                    pass
+                    auth_json = json_module.loads(decoded.decode("utf-8"))
+                except (UnicodeDecodeError, json_module.JSONDecodeError):
+                    auth_json = {}
 
-                self._log("授权 Cookie 里没有 workspace 信息，尝试 /api/accounts API", "warning")
-                return self._get_workspace_id_from_api()
+                workspaces = auth_json.get("workspaces") or []
+                if not workspaces:
+                    self._log(f"segment[0] 内容: {str(auth_json)[:200]}", "warning")
+                    self._log("授权 Cookie 里没有 workspace 信息", "error")
+                    return self._get_workspace_id_from_api()
+
+                workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
+                if not workspace_id:
+                    self._log("无法解析 workspace_id", "error")
+                    return None
+
+                self._log(f"Workspace ID: {workspace_id}")
+                return workspace_id
 
             except Exception as e:
                 self._log(f"解析授权 Cookie 失败: {e}", "error")
