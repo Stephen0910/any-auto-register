@@ -1192,19 +1192,21 @@ class KiroRegister:
         self.log("  12f: POST oidc/client/register...")
         reg_h = {
             "content-type": "application/json",
-            "user-agent": "aws-sdk-rust/1.3.9 os/windows lang/rust/1.87.0",
+            "user-agent": "Kiro/1.0 (darwin; arm64) Kiro/0.1.0",
             "x-amz-user-agent": "aws-sdk-rust/1.3.9 ua/2.1 api/ssooidc/1.88.0 "
-                "os/windows lang/rust/1.87.0 m/E app/AmazonQ-For-CLI",
+                "os/macos lang/rust/1.87.0 m/E app/Kiro",
             "amz-sdk-request": "attempt=1; max=3",
             "amz-sdk-invocation-id": _uuid(),
         }
         reg_body = {
-            "clientName": "Amazon Q Developer for command line",
+            "clientName": "Kiro IDE",
             "clientType": "public",
             "scopes": [
                 "codewhisperer:completions",
                 "codewhisperer:analysis",
                 "codewhisperer:conversations",
+                "codewhisperer:transformations",
+                "codewhisperer:taskassist",
             ],
             "grantTypes": [
                 "urn:ietf:params:oauth:grant-type:device_code",

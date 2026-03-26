@@ -60,19 +60,20 @@ def upload_account(body: CpaUploadRequest):
     expires_at = datetime.now(tz=timezone(timedelta(hours=8))) + timedelta(hours=1)
 
     token_data = {
-        "type": "kiro",
-        "email": acc.email,
         "access_token": cred_map.get("accessToken") or cred_map.get("access_token") or "",
-        "refresh_token": cred_map.get("refreshToken") or cred_map.get("refresh_token") or "",
+        "auth_method": "builder-id",
         "client_id": cred_map.get("clientId") or cred_map.get("client_id") or "",
         "client_secret": cred_map.get("clientSecret") or cred_map.get("client_secret") or "",
-        "auth_method": "builder-id",
-        "provider": "AWS",
-        "region": "us-east-1",
-        "start_url": "https://view.awsapps.com/start",
-        "profile_arn": "",
+        "disabled": False,
+        "email": acc.email,
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
         "last_refresh": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "profile_arn": "",
+        "provider": "AWS",
+        "refresh_token": cred_map.get("refreshToken") or cred_map.get("refresh_token") or "",
+        "region": "us-east-1",
+        "start_url": "https://view.awsapps.com/start",
+        "type": "kiro",
     }
 
     ok, msg = upload_to_cpa(token_data, api_url=body.api_url, api_key=body.api_key, proxy=body.proxy)

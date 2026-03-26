@@ -50,19 +50,20 @@ def generate_token_json(account) -> dict:
     expires_at = datetime.now(tz=timezone(timedelta(hours=8))) + __import__('datetime').timedelta(hours=1)
 
     return {
-        "type": "kiro",
-        "email": email,
         "access_token": access_token,
-        "refresh_token": refresh_token,
+        "auth_method": "builder-id",
         "client_id": client_id,
         "client_secret": client_secret,
-        "auth_method": "builder-id",
-        "provider": "AWS",
-        "region": "us-east-1",
-        "start_url": "https://view.awsapps.com/start",
-        "profile_arn": "",
+        "disabled": False,
+        "email": email,
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
         "last_refresh": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "profile_arn": "",
+        "provider": "AWS",
+        "refresh_token": refresh_token,
+        "region": "us-east-1",
+        "start_url": "https://view.awsapps.com/start",
+        "type": "kiro",
     }
 
 
