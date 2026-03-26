@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { getTaskStatusText, TASK_STATUS_VARIANTS } from '@/lib/tasks'
-import { RefreshCw, Copy, ExternalLink, Download, Upload, Plus, X, Mail, WalletCards, ShieldCheck, Inbox, ScanSearch } from 'lucide-react'
+import { RefreshCw, Copy, ExternalLink, Download, Upload, Plus, X, Mail, WalletCards, ShieldCheck, Inbox, ScanSearch, Trash2 } from 'lucide-react'
 
 const STATUS_VARIANT: Record<string, any> = {
   registered: 'default', trial: 'success', subscribed: 'success',
@@ -1276,6 +1276,24 @@ export default function Accounts() {
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setShowAdd(true)}>手动新增</Button>
+              {selectedCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-red-400 text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+                  onClick={async () => {
+                    if (!confirm(`确认删除选中的 ${selectedCount} 个账号？此操作不可恢复。`)) return
+                    const ids = [...selectedIds]
+                    const res = await apiFetch('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+                    setSelectedIds(new Set())
+                    load()
+                    alert(`已删除 ${res.deleted} 个账号`)
+                  }}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  删除已选({selectedCount})
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               </Button>

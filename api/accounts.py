@@ -202,3 +202,19 @@ def delete_account(account_id: int):
     if not result["ok"]:
         raise HTTPException(404, "账号不存在")
     return result
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+@router.post("/batch-delete")
+def batch_delete_accounts(body: BatchDeleteRequest):
+    if not body.ids:
+        raise HTTPException(400, "ids 不能为空")
+    deleted = 0
+    for account_id in body.ids:
+        result = service.delete_account(account_id)
+        if result["ok"]:
+            deleted += 1
+    return {"ok": True, "deleted": deleted}
