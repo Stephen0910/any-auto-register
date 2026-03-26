@@ -75,5 +75,19 @@ def check_account(body: KiroCheckRequest):
     if not access_token:
         return {"ok": False, "email": acc.email, "status": "no_token", "detail": "无 accessToken"}
 
-    result = _check_token(access_token, proxy=body.proxy)
+    # 自动读 active proxy
+    proxy = body.proxy
+    if not proxy:
+        try:
+            from sqlmodel import Session, select
+            from core.db import engine
+            from core.db import ProxyModel
+            with Session(engine) as ps:
+                active = ps.exec(select(ProxyModel).where(ProxyModel.is_active == True)).first()
+                if active:
+                    proxy = active.url
+        except Exception:
+            proxy = "http://127.0.0.1:7890"
+
+    result = _check_token(access_token, proxy=proxy or None)
     return {"ok": True, "email": acc.email, **result}
