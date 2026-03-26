@@ -371,13 +371,21 @@ class RegistrationEngine:
                 "username": self.email
             })
 
+            # register 密码用 username_password_create flow 的 sentinel
+            _reg_sentinel = self.http_client.check_sentinel(
+                getattr(self, 'device_id', '') or "",
+                flow="username_password_create"
+            )
+
             _reg_headers = {
+                "origin": "https://auth.openai.com",
                 "referer": "https://auth.openai.com/create-account/password",
                 "accept": "application/json",
                 "content-type": "application/json",
                 "oai-device-id": getattr(self, 'device_id', '') or "",
             }
-            _reg_headers.update(_generate_datadog_trace())
+            if _reg_sentinel:
+                _reg_headers["openai-sentinel-token"] = _reg_sentinel
 
             response = self.session.post(
                 OPENAI_API_ENDPOINTS["register"],
@@ -400,12 +408,29 @@ class RegistrationEngine:
                     # 检测邮箱已注册的情况
                     if "already" in error_msg.lower() or "exists" in error_msg.lower() or error_code == "user_exists":
                         self._log(f"邮箱 {self.email} 可能已在 OpenAI 注册过", "error")
-                        # 标记此邮箱为已注册状态
                         self._mark_email_as_registered()
                 except Exception:
                     pass
 
                 return False, None
+
+            # 处理 register 响应里的 continue_url（触发 OTP 发送）
+            try:
+                reg_data = response.json() or {}
+                otp_trigger_url = reg_data.get("continue_url") or ""
+                if otp_trigger_url and "email-otp/send" in otp_trigger_url:
+                    self._log(f"register 响应含 continue_url，触发 OTP 发送...")
+                    send_resp = self.session.get(
+                        otp_trigger_url,
+                        headers={
+                            "referer": "https://auth.openai.com/create-account/password",
+                            "accept": "application/json",
+                        },
+                    )
+                    self._log(f"OTP 触发状态: {send_resp.status_code}")
+                    self._otp_sent_at = time.time()
+            except Exception as e:
+                self._log(f"解析 register 响应失败: {e}", "warning")
 
             return True, password
 
