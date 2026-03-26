@@ -127,37 +127,123 @@ class OpenAIHTTPClient(HTTPClient):
         except cffi_requests.RequestsError as e:
             raise HTTPClientError(f"OpenAI 请求失败: {endpoint} - {e}")
 
-    def check_sentinel(self, did: str, proxies: Optional[Dict] = None) -> Optional[str]:
+    def check_sentinel(self, did: str, proxies: Optional[Dict] = None, flow: str = "authorize_continue") -> Optional[str]:
         """
-        检查 Sentinel 拦截
+        检查 Sentinel 拦截（使用本地 PoW 生成 requirements token）
 
         Args:
             did: Device ID
             proxies: 代理配置
+            flow: sentinel flow 类型
 
         Returns:
-            Sentinel token 或 None
+            完整 sentinel token JSON 字符串 或 None
         """
-        from .constants import OPENAI_API_ENDPOINTS
+        import base64 as _b64
+        import json as _json
+        import random as _random
+        import time as _time
+        import uuid as _uuid
+        import datetime as _dt
 
+        USER_AGENT = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/145.0.0.0 Safari/537.36"
+        )
+
+        # ---- 本地 PoW SentinelTokenGenerator ----
+        class _SentinelGen:
+            MAX_ATTEMPTS = 500000
+            ERROR_PREFIX = "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D"
+
+            def __init__(self, device_id: str):
+                self.device_id = device_id
+                self.requirements_seed = str(_random.random())
+                self.sid = str(_uuid.uuid4())
+
+            @staticmethod
+            def _fnv1a_32(text: str) -> str:
+                h = 2166136261
+                for ch in text:
+                    h ^= ord(ch)
+                    h = (h * 16777619) & 0xFFFFFFFF
+                h ^= (h >> 16)
+                h = (h * 2246822507) & 0xFFFFFFFF
+                h ^= (h >> 13)
+                h = (h * 3266489909) & 0xFFFFFFFF
+                h ^= (h >> 16)
+                h &= 0xFFFFFFFF
+                return format(h, "08x")
+
+            @staticmethod
+            def _b64enc(data) -> str:
+                js = _json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+                return _b64.b64encode(js.encode("utf-8")).decode("ascii")
+
+            def _get_config(self):
+                now = _dt.datetime.now(_dt.timezone.utc).strftime("%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)")
+                perf_now = _random.uniform(1000, 50000)
+                time_origin = _time.time() * 1000 - perf_now
+                return [
+                    "1920x1080", now, 4294705152, _random.random(), USER_AGENT,
+                    "https://sentinel.openai.com/sentinel/20260124ceb8/sdk.js",
+                    None, None, "en-US", "en-US,en", _random.random(),
+                    "vendorSub\u2212undefined", "location", "Object",
+                    perf_now, self.sid, "", _random.choice([4, 8, 12, 16]), time_origin,
+                ]
+
+            def generate_requirements_token(self) -> str:
+                cfg = self._get_config()
+                cfg[3] = 1
+                cfg[9] = round(_random.uniform(5, 50))
+                return "gAAAAAC" + self._b64enc(cfg)
+
+            def generate_token(self, seed=None, difficulty=None) -> str:
+                if seed is None:
+                    seed = self.requirements_seed
+                    difficulty = difficulty or "0"
+                cfg = self._get_config()
+                start = _time.time()
+                for i in range(self.MAX_ATTEMPTS):
+                    cfg[3] = i
+                    cfg[9] = round((_time.time() - start) * 1000)
+                    data = self._b64enc(cfg)
+                    if self._fnv1a_32(seed + data)[: len(difficulty or "0")] <= (difficulty or "0"):
+                        return "gAAAAAB" + data + "~S"
+                return "gAAAAAB" + self.ERROR_PREFIX + self._b64enc(str(None))
+
+        from .constants import OPENAI_API_ENDPOINTS
         try:
-            sen_req_body = f'{{"p":"","id":"{did}","flow":"authorize_continue"}}'
+            gen = _SentinelGen(device_id=did)
+            req_token = gen.generate_requirements_token()
+            body = _json.dumps({"p": req_token, "id": did, "flow": flow})
 
             response = self.post(
                 OPENAI_API_ENDPOINTS["sentinel"],
                 headers={
                     "origin": "https://sentinel.openai.com",
-                    "referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html?sv=20260219f9f6",
+                    "referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html",
                     "content-type": "text/plain;charset=UTF-8",
                 },
-                data=sen_req_body,
+                data=body,
             )
 
-            if response.status_code == 200:
-                return response.json().get("token")
-            else:
+            if response.status_code != 200:
                 logger.warning(f"Sentinel 检查失败: {response.status_code}")
                 return None
+
+            data = response.json()
+            c_value = data.get("token", "")
+            pow_data = data.get("proofofwork", {})
+
+            if isinstance(pow_data, dict) and pow_data.get("required") and pow_data.get("seed"):
+                p_value = gen.generate_token(seed=pow_data.get("seed"), difficulty=pow_data.get("difficulty", "0"))
+                logger.debug(f"Sentinel PoW 计算完成")
+            else:
+                p_value = gen.generate_requirements_token()
+
+            return _json.dumps({"p": p_value, "t": "", "c": c_value, "id": did, "flow": flow})
 
         except Exception as e:
             logger.error(f"Sentinel 检查异常: {e}")

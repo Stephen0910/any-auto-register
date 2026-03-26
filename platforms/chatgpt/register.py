@@ -6,6 +6,7 @@
 import re
 import json
 import time
+import random
 import logging
 import secrets
 import string
@@ -17,6 +18,22 @@ from curl_cffi import requests as cffi_requests
 
 from .oauth import OAuthManager, OAuthStart
 from .http_client import OpenAIHTTPClient, HTTPClientError
+
+
+def _generate_datadog_trace() -> Dict[str, str]:
+    """生成 Datadog RUM trace headers"""
+    trace_id = str(random.getrandbits(64))
+    parent_id = str(random.getrandbits(64))
+    trace_hex = format(int(trace_id), "016x")
+    parent_hex = format(int(parent_id), "016x")
+    return {
+        "traceparent": f"00-0000000000000000{trace_hex}-{parent_hex}-01",
+        "tracestate": "dd=s:1;o:rum",
+        "x-datadog-origin": "rum",
+        "x-datadog-parent-id": parent_id,
+        "x-datadog-sampling-priority": "1",
+        "x-datadog-trace-id": trace_id,
+    }
 # from ..services import EmailServiceFactory, BaseEmailService, EmailServiceType  # removed: external dep
 class BaseEmailService: pass  # stub for type hints
 # from ..database import crud  # removed: external dep
@@ -232,28 +249,14 @@ class RegistrationEngine:
             return None
 
     def _check_sentinel(self, did: str) -> Optional[str]:
-        """检查 Sentinel 拦截"""
+        """检查 Sentinel 拦截（使用 PoW 本地计算）"""
         try:
-            sen_req_body = f'{{"p":"","id":"{did}","flow":"authorize_continue"}}'
-
-            response = self.http_client.post(
-                OPENAI_API_ENDPOINTS["sentinel"],
-                headers={
-                    "origin": "https://sentinel.openai.com",
-                    "referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html?sv=20260219f9f6",
-                    "content-type": "text/plain;charset=UTF-8",
-                },
-                data=sen_req_body,
-            )
-
-            if response.status_code == 200:
-                sen_token = response.json().get("token")
-                self._log(f"Sentinel token 获取成功")
-                return sen_token
+            sentinel_token = self.http_client.check_sentinel(did)
+            if sentinel_token:
+                self._log("Sentinel token 获取成功")
             else:
-                self._log(f"Sentinel 检查失败: {response.status_code}", "warning")
-                return None
-
+                self._log("Sentinel 检查失败", "warning")
+            return sentinel_token
         except Exception as e:
             self._log(f"Sentinel 检查异常: {e}", "warning")
             return None
@@ -272,11 +275,12 @@ class RegistrationEngine:
                 "referer": "https://auth.openai.com/create-account",
                 "accept": "application/json",
                 "content-type": "application/json",
+                "oai-device-id": did,
             }
+            headers.update(_generate_datadog_trace())
 
             if sen_token:
-                sentinel = f'{{"p": "", "t": "", "c": "{sen_token}", "id": "{did}", "flow": "authorize_continue"}}'
-                headers["openai-sentinel-token"] = sentinel
+                headers["openai-sentinel-token"] = sen_token
 
             response = self.session.post(
                 OPENAI_API_ENDPOINTS["signup"],
@@ -335,13 +339,17 @@ class RegistrationEngine:
                 "username": self.email
             })
 
+            _reg_headers = {
+                "referer": "https://auth.openai.com/create-account/password",
+                "accept": "application/json",
+                "content-type": "application/json",
+                "oai-device-id": self.device_id or "",
+            }
+            _reg_headers.update(_generate_datadog_trace())
+
             response = self.session.post(
                 OPENAI_API_ENDPOINTS["register"],
-                headers={
-                    "referer": "https://auth.openai.com/create-account/password",
-                    "accept": "application/json",
-                    "content-type": "application/json",
-                },
+                headers=_reg_headers,
                 data=register_body,
             )
 
