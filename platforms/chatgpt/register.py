@@ -634,6 +634,50 @@ class RegistrationEngine:
             self._log(f"选择 Workspace 失败: {e}", "error")
             return None
 
+    def _get_callback_via_consent(self, consent_url: str) -> Optional[str]:
+        """直接走 consent URL 重定向链拿 callback URL（参考 auto_pool_maintainer 逻辑）"""
+        def extract_code(url: str) -> bool:
+            return "code=" in url and "localhost" in url
+
+        # 1. 先不跟随重定向，看 Location
+        try:
+            resp = self.session.get(
+                consent_url,
+                headers={"accept": "text/html,application/xhtml+xml,*/*", "referer": "https://auth.openai.com/"},
+                allow_redirects=False,
+                timeout=20,
+            )
+            self._log(f"consent GET 状态: {resp.status_code}", "warning")
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("Location", "")
+                self._log(f"consent redirect -> {loc[:150]}", "warning")
+                if extract_code(loc):
+                    return loc
+                return self._follow_redirects(loc)
+        except Exception as e:
+            self._log(f"consent GET 异常: {e}", "warning")
+
+        # 2. Fallback: 跟随所有重定向
+        try:
+            resp2 = self.session.get(
+                consent_url,
+                headers={"accept": "text/html,application/xhtml+xml,*/*", "referer": "https://auth.openai.com/"},
+                allow_redirects=True,
+                timeout=20,
+            )
+            final_url = str(getattr(resp2, 'url', '') or '')
+            self._log(f"consent follow 最终 URL: {final_url[:150]}", "warning")
+            if extract_code(final_url):
+                return final_url
+            for h in getattr(resp2, 'history', []):
+                loc = h.headers.get("Location", "")
+                if extract_code(loc):
+                    return loc
+        except Exception as e:
+            self._log(f"consent follow 异常: {e}", "warning")
+
+        return None
+
     def _follow_redirects(self, start_url: str) -> Optional[str]:
         """跟随重定向链，寻找回调 URL"""
         try:
@@ -820,28 +864,31 @@ class RegistrationEngine:
                     result.error_message = "创建用户账户失败"
                     return result
 
-            # 13. 获取 Workspace ID
-            self._log("13. 获取 Workspace ID...")
-            workspace_id = self._get_workspace_id()
-            if not workspace_id:
-                result.error_message = "获取 Workspace ID 失败"
-                return result
+            # 13. 走 consent 重定向链拿 auth_code（workspace/select 为 fallback）
+            self._log("13. 走 consent 流程获取 OAuth code...")
+            consent_url = f"{OPENAI_API_ENDPOINTS.get('auth_base', 'https://auth.openai.com')}/sign-in-with-chatgpt/codex/consent"
+            callback_url = self._get_callback_via_consent(consent_url)
 
-            result.workspace_id = workspace_id
-
-            # 14. 选择 Workspace
-            self._log("14. 选择 Workspace...")
-            continue_url = self._select_workspace(workspace_id)
-            if not continue_url:
-                result.error_message = "选择 Workspace 失败"
-                return result
-
-            # 15. 跟随重定向链
-            self._log("15. 跟随重定向链...")
-            callback_url = self._follow_redirects(continue_url)
             if not callback_url:
-                result.error_message = "跟随重定向链失败"
-                return result
+                # Fallback: workspace/select 路径
+                self._log("consent 直接路径失败，fallback 到 workspace/select...", "warning")
+                workspace_id = self._get_workspace_id()
+                if not workspace_id:
+                    result.error_message = "获取 Workspace ID 失败"
+                    return result
+                result.workspace_id = workspace_id
+
+                self._log("14. 选择 Workspace...")
+                continue_url = self._select_workspace(workspace_id)
+                if not continue_url:
+                    result.error_message = "选择 Workspace 失败"
+                    return result
+
+                self._log("15. 跟随重定向链...")
+                callback_url = self._follow_redirects(continue_url)
+                if not callback_url:
+                    result.error_message = "跟随重定向链失败"
+                    return result
 
             # 16. 处理 OAuth 回调
             self._log("16. 处理 OAuth 回调...")
