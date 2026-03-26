@@ -211,11 +211,29 @@ class RegistrationEngine:
             return False
 
     def _start_oauth(self) -> bool:
-        """开始 OAuth 流程"""
+        """开始 OAuth 流程（参考 auto_pool_maintainer 先完成会话预热）"""
         try:
             self._log("开始 OAuth 授权流程...")
             self.oauth_start = self.oauth_manager.start_oauth()
             self._log(f"OAuth URL 已生成: {self.oauth_start.auth_url[:80]}...")
+
+            # 参考上游逻辑：先固定 oai-did，再访问 authorize 预热出 login_session
+            self.device_id = str(secrets.token_hex(16))
+            self.session.cookies.set("oai-did", self.device_id, domain=".auth.openai.com")
+            self.session.cookies.set("oai-did", self.device_id, domain="auth.openai.com")
+
+            resp = self.session.get(
+                self.oauth_start.auth_url,
+                headers={"accept": "text/html,application/xhtml+xml,*/*", "referer": "https://auth.openai.com/"},
+                allow_redirects=True,
+                timeout=30,
+            )
+            cookie_names = [c.name for c in self.session.cookies]
+            has_login_session = any(c == "login_session" for c in cookie_names)
+            self._log(f"OAuth 预热状态: {resp.status_code}, login_session={'yes' if has_login_session else 'no'}")
+            if not has_login_session:
+                self._log(f"未获取 login_session cookie: {cookie_names}", "warning")
+                return False
             return True
         except Exception as e:
             self._log(f"生成 OAuth URL 失败: {e}", "error")
@@ -231,19 +249,15 @@ class RegistrationEngine:
             return False
 
     def _get_device_id(self) -> Optional[str]:
-        """获取 Device ID"""
+        """获取 Device ID（优先使用预热阶段固定的 oai-did）"""
         try:
-            if not self.oauth_start:
-                return None
+            if getattr(self, "device_id", None):
+                self._log(f"Device ID: {self.device_id}")
+                return self.device_id
 
-            response = self.session.get(
-                self.oauth_start.auth_url,
-                timeout=15
-            )
             did = self.session.cookies.get("oai-did")
             self._log(f"Device ID: {did}")
             return did
-
         except Exception as e:
             self._log(f"获取 Device ID 失败: {e}", "error")
             return None
@@ -343,7 +357,7 @@ class RegistrationEngine:
                 "referer": "https://auth.openai.com/create-account/password",
                 "accept": "application/json",
                 "content-type": "application/json",
-                "oai-device-id": self.device_id or "",
+                "oai-device-id": getattr(self, 'device_id', '') or "",
             }
             _reg_headers.update(_generate_datadog_trace())
 
