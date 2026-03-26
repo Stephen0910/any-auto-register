@@ -482,11 +482,18 @@ class RegistrationEngine:
             self._log(f"账户创建状态: {response.status_code}")
 
             if response.status_code != 200:
-                self._log(f"账户创建失败: {response.text[:200]}", "warning")
+                error_text = response.text[:500]
+                self._log(f"账户创建失败: {error_text}", "warning")
+                # 检测 unsupported_country，返回特殊标记
+                if "unsupported_country" in error_text or "not available in your country" in error_text:
+                    self._log("代理出口 IP 被 OpenAI 判定为不支持地区，跳过本次代理", "error")
+                    raise ValueError("unsupported_country")
                 return False
 
             return True
 
+        except ValueError:
+            raise
         except Exception as e:
             self._log(f"创建账户失败: {e}", "error")
             return False
@@ -511,9 +518,17 @@ class RegistrationEngine:
 
                 # 解码第二个 segment（payload）
                 payload = segments[1]
+                # URL decode 先处理 %xx 编码
+                import urllib.parse as _urlparse
+                payload = _urlparse.unquote(payload)
                 pad = "=" * ((4 - (len(payload) % 4)) % 4)
                 decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
-                auth_json = json_module.loads(decoded.decode("utf-8"))
+                # 尝试 utf-8，失败则 latin-1（兼容任意单字节）
+                try:
+                    auth_json = json_module.loads(decoded.decode("utf-8"))
+                except UnicodeDecodeError:
+                    self._log(f"Cookie payload 非 UTF-8，尝试 latin-1 解码", "warning")
+                    auth_json = json_module.loads(decoded.decode("latin-1"))
 
                 workspaces = auth_json.get("workspaces") or []
                 if not workspaces:
@@ -742,7 +757,14 @@ class RegistrationEngine:
                 self._log("12. [已注册账号] 跳过创建用户账户")
             else:
                 self._log("12. 创建用户账户...")
-                if not self._create_user_account():
+                try:
+                    account_ok = self._create_user_account()
+                except ValueError as ve:
+                    if "unsupported_country" in str(ve):
+                        result.error_message = "IP 地区不支持（create_account 阶段）"
+                        return result
+                    raise
+                if not account_ok:
                     result.error_message = "创建用户账户失败"
                     return result
 
