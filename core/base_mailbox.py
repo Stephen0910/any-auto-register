@@ -728,7 +728,10 @@ class CFWorkerMailbox(BaseMailbox):
                             pass
                     decoded_text = '\n'.join(decoded_parts)
                     if decoded_text:
-                        m = re.search(code_pattern or r'(?<!\d)(\d{6})(?!\d)', decoded_text)
+                        # 先用 code_pattern，失败再用宽松正则
+                        m = re.search(code_pattern, decoded_text) if code_pattern else None
+                        if not m:
+                            m = re.search(r'(?<!\d)(\d{6})(?!\d)', decoded_text)
                         if m:
                             return m.group(1) if m.groups() else m.group(0)
                     # 2. 跳过 MIME header，只搜 body 部分，避免匹配时间戳
