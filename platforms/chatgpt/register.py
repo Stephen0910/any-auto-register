@@ -547,6 +547,16 @@ class RegistrationEngine:
                 if "unsupported_country" in error_text or "not available in your country" in error_text:
                     self._log("代理出口 IP 被 OpenAI 判定为不支持地区，跳过本次代理", "error")
                     raise ValueError("unsupported_country")
+                # 检测 registration_disallowed，把当前邮箱域名加入黑名单
+                if "registration_disallowed" in error_text:
+                    try:
+                        from core.domain_blacklist import add as bl_add
+                        domain = self.email.split("@")[-1].lower() if "@" in (self.email or "") else ""
+                        if domain:
+                            self._log(f"邮箱域名 {domain} 被 OpenAI 拒绝，加入黑名单", "warning")
+                            bl_add(domain)
+                    except Exception as _ble:
+                        self._log(f"黑名单写入失败: {_ble}", "warning")
                 return False
 
             # 尝试从响应里提取 workspace_id 和页面类型

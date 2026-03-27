@@ -378,30 +378,44 @@ class TempMailLolMailbox(BaseMailbox):
 
     def get_email(self) -> MailboxAccount:
         import requests
-        r = requests.post(f"{self.api}/inbox/create",
-            json={},
-            proxies=self.proxy, timeout=15)
-        data = r.json()
-        self._email = data.get("address") or data.get("email", "")
-        self._token = data.get("token", "")
-        return MailboxAccount(
-            email=self._email,
-            account_id=self._token,
-            extra={
-                "provider_resource": {
-                    "provider_type": "mailbox",
-                    "provider_name": "tempmail_lol",
-                    "resource_type": "mailbox",
-                    "resource_identifier": self._token,
-                    "handle": self._email,
-                    "display_name": self._email,
-                    "metadata": {
-                        "email": self._email,
-                        "token": self._token,
+        from core.domain_blacklist import is_blacklisted
+
+        max_attempts = 30
+        for attempt in range(max_attempts):
+            r = requests.post(f"{self.api}/inbox/create",
+                json={},
+                proxies=self.proxy, timeout=15)
+            data = r.json()
+            email = data.get("address") or data.get("email", "")
+            token = data.get("token", "")
+
+            domain = email.split("@")[-1].lower() if "@" in email else ""
+            if is_blacklisted(domain):
+                print(f"[TempMailLol] 跳过黑名单域名: {email} (attempt {attempt+1})")
+                continue
+
+            self._email = email
+            self._token = token
+            return MailboxAccount(
+                email=self._email,
+                account_id=self._token,
+                extra={
+                    "provider_resource": {
+                        "provider_type": "mailbox",
+                        "provider_name": "tempmail_lol",
+                        "resource_type": "mailbox",
+                        "resource_identifier": self._token,
+                        "handle": self._email,
+                        "display_name": self._email,
+                        "metadata": {
+                            "email": self._email,
+                            "token": self._token,
+                        },
                     },
                 },
-            },
-        )
+            )
+
+        raise RuntimeError(f"TempMailLol 连续 {max_attempts} 次生成的域名均在黑名单中")
 
     def get_current_ids(self, account: MailboxAccount) -> set:
         import requests
