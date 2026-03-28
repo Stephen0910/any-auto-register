@@ -59,7 +59,7 @@ def _click_first(page, selectors: list[str], *, timeout: int = 10) -> str | None
 
 def _dump_debug(page, prefix: str) -> None:
     page.screenshot(path=f"/tmp/{prefix}.png")
-    with open(f"/tmp/{prefix}.html", "w") as f:
+    with open(f"/tmp/{prefix}.html", "w", encoding="utf-8") as f:
         f.write(page.content())
 
 
@@ -140,6 +140,7 @@ class ChatGPTBrowserRegister:
         launch_opts = {"headless": self.headless}
         if proxy:
             launch_opts["proxy"] = proxy
+            launch_opts["geoip"] = True
 
         with Camoufox(**launch_opts) as browser:
             page = browser.new_page()

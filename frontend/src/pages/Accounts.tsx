@@ -890,15 +890,17 @@ function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; 
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog-panel dialog-panel-sm overflow-y-auto" style={{maxHeight:'90vh'}} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
+      <div className="dialog-panel dialog-panel-sm flex flex-col" style={{maxHeight:'90vh'}} onClick={e => e.stopPropagation()}>
+        {/* ── Sticky Header ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
           <div>
             <h2 className="text-base font-semibold text-[var(--text-primary)]">账号详情</h2>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">{acc.email}</p>
           </div>
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X className="h-4 w-4" /></button>
         </div>
-        <div className="px-6 py-4 space-y-3">
+        {/* ── Scrollable Content ── */}
+        <div className="px-6 py-4 space-y-3 flex-1 overflow-y-auto min-h-0">
           <div className="grid gap-3 sm:grid-cols-3">
             <ResultStat label="展示状态" value={getDisplayStatus(acc)} />
             <ResultStat label="生命周期" value={getLifecycleStatus(acc)} />
@@ -943,7 +945,7 @@ function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; 
                         <div key={key}>
                           <div className="text-[11px] text-[var(--text-muted)]">{key}</div>
                           <div className="flex items-start gap-1">
-                            <div className="flex-1 rounded-md border border-[var(--border)] bg-black/20 px-2 py-1.5 text-xs font-mono text-[var(--text-secondary)] break-all">
+                            <div className="flex-1 rounded-md border border-[var(--border)] bg-black/20 px-2 py-1.5 text-xs font-mono text-[var(--text-secondary)] break-all max-h-40 overflow-y-auto">
                               {String(value || '-')}
                             </div>
                             {value ? (
@@ -967,7 +969,7 @@ function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; 
                 <div key={`${item.scope}-${item.key}`} className="rounded-xl border border-[var(--border)] bg-[var(--bg-hover)] p-3">
                   <div className="text-[11px] text-[var(--text-muted)]">{item.key}</div>
                   <div className="mt-1 flex items-start gap-1">
-                    <div className="flex-1 rounded-md border border-[var(--border)] bg-black/20 px-2 py-1.5 text-xs font-mono text-[var(--text-secondary)] break-all">
+                    <div className="flex-1 rounded-md border border-[var(--border)] bg-black/20 px-2 py-1.5 text-xs font-mono text-[var(--text-secondary)] break-all max-h-40 overflow-y-auto">
                       {item.value}
                     </div>
                     <button onClick={() => copyText(String(item.value || ''))} className="mt-1 shrink-0 text-[var(--text-muted)] hover:text-[var(--text-secondary)]">
@@ -996,7 +998,8 @@ function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; 
               rows={2} className="control-surface control-surface-mono resize-none" />
           </div>
         </div>
-        <div className="flex gap-3 px-6 py-4 border-t border-[var(--border)]">
+        {/* ── Sticky Footer ── */}
+        <div className="flex gap-3 px-6 py-4 border-t border-[var(--border)] shrink-0">
           <Button onClick={save} disabled={saving} className="flex-1">{saving ? '保存中...' : '保存'}</Button>
           <Button variant="outline" onClick={onClose} className="flex-1">取消</Button>
         </div>
@@ -1166,6 +1169,7 @@ export default function Accounts() {
   const [platformsMap, setPlatformsMap] = useState<Record<string, any>>({})
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [actionResult, setActionResult] = useState<{ title: string; payload: any } | null>(null)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   useEffect(() => {
     getPlatforms().then((list: any[]) => {
@@ -1328,6 +1332,30 @@ export default function Accounts() {
               <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               </Button>
+              {selectedCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={bulkDeleting}
+                  className="!border-red-500/30 !text-[#f0b0b0] hover:!bg-red-500/10 hover:!text-[#ffd5d5]"
+                  onClick={async () => {
+                    if (!confirm(`确认删除选中的 ${selectedCount} 个账号？此操作不可撤销。`)) return
+                    setBulkDeleting(true)
+                    try {
+                      await Promise.allSettled(
+                        [...selectedIds].map(id => apiFetch(`/accounts/${id}`, { method: 'DELETE' }))
+                      )
+                      setSelectedIds(new Set())
+                      load()
+                    } finally {
+                      setBulkDeleting(false)
+                    }
+                  }}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  {bulkDeleting ? '删除中...' : `删除(${selectedCount})`}
+                </Button>
+              )}
             </div>
           </div>
 
