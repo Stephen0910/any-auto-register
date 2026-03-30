@@ -63,39 +63,20 @@ function PlatformGroup({
     if (isGroupActive) setOpen(true)
   }, [isGroupActive])
 
-  // children[0] 是父平台（如果存在），其余是子平台
-  const parentPlatform = children[0]?.key === groupKey ? children[0] : null
-  const childItems = parentPlatform ? children.slice(1) : children
+  // children 包含父+子，展开时全部显示
+  const childItems = children
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center">
-        {parentPlatform ? (
-          <NavLink
-            to={`/accounts/${parentPlatform.key}`}
-            className={({ isActive }) => [
-              'flex-1 flex items-center gap-2 rounded-2xl px-3 py-2 text-sm transition-colors',
-              isActive
-                ? 'bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] text-[var(--text-primary)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
-            ].join(' ')}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]/80" />
-            <span>{parentPlatform.label}</span>
-          </NavLink>
-        ) : (
-          <span className="flex-1 px-3 py-2 text-sm text-[var(--text-secondary)]">{parentLabel}</span>
-        )}
-        {childItems.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setOpen(v => !v)}
-            className="mr-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-          >
-            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]/80" />
+        <span className="flex-1 text-left">{parentLabel}</span>
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+      </button>
       {open && childItems.length > 0 && (
         <div className="ml-4 space-y-1 border-l border-[var(--border-soft)] pl-3">
           {childItems.map(child => (
