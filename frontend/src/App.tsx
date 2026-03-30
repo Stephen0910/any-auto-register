@@ -141,18 +141,29 @@ function AccountsSubNav() {
   }, [])
 
   // 计算分组结构：有 group 的归入父组，没有的单独显示
+  // 如果某个平台被引用为 group 父节点，也从 standalone 移出
   const groupedPlatforms = (() => {
     const groups: Record<string, { key: string; label: string; group: string }[]> = {}
-    const standalone: { key: string; label: string; group: string }[] = []
+    const standaloneSet = new Map<string, { key: string; label: string; group: string }>()
+    platforms.forEach(p => standaloneSet.set(p.key, p))
+    // 先收集所有 group 子项
     platforms.forEach(p => {
       if (p.group) {
         if (!groups[p.group]) groups[p.group] = []
         groups[p.group].push(p)
-      } else {
-        standalone.push(p)
       }
     })
-    return { groups, standalone }
+    // 把被引用为 group 父节点的平台从 standalone 移到 groups 里
+    Object.keys(groups).forEach(groupKey => {
+      if (standaloneSet.has(groupKey) && !groups[groupKey].some(c => c.key === groupKey)) {
+        // 父平台在 standalone 里但不在子项里，把它加进去作为第一个
+        const parent = standaloneSet.get(groupKey)!
+        groups[groupKey].unshift(parent)
+      }
+      // 从 standalone 移除所有属于这个 group 的平台
+      groups[groupKey].forEach(c => standaloneSet.delete(c.key))
+    })
+    return { groups, standalone: Array.from(standaloneSet.values()) }
   })()
 
   return (
@@ -186,7 +197,7 @@ function AccountsSubNav() {
             </NavLink>
           ))}
           {Object.entries(groupedPlatforms.groups).map(([groupKey, children]) => {
-            const parentPlatform = platforms.find(p => p.key === groupKey)
+            const parentPlatform = children.find(c => c.key === groupKey)
             const parentLabel = parentPlatform?.label || (groupKey.charAt(0).toUpperCase() + groupKey.slice(1))
             const isGroupActive = children.some(c => location.pathname === `/accounts/${c.key}`)
             return (
