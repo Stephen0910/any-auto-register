@@ -84,16 +84,24 @@ class MailServiceClient:
 
     def wait_for_code(self, email: str, timeout: int = 120, keyword: str = "openai") -> str | None:
         """长轮询等待验证码"""
-        resp = requests.get(
-            f"{self.base_url}/api/mail/{email}/code",
-            params={"timeout": timeout, "keyword": keyword},
-            timeout=timeout + 10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            code = data.get("code")
-            if code:
-                return code
+        try:
+            resp = requests.get(
+                f"{self.base_url}/api/mail/{email}/code",
+                params={"timeout": timeout, "keyword": keyword},
+                timeout=timeout + 10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                code = data.get("code")
+                if code:
+                    return code
+            else:
+                import traceback
+                print(f"[wait_for_code] 非200响应: {resp.status_code} {resp.text[:200]}")
+        except Exception as e:
+            import traceback
+            print(f"[wait_for_code] 异常: {e}")
+            traceback.print_exc()
         return None
 
     def get_messages(self, email: str) -> list:
@@ -196,6 +204,7 @@ class KeygenEngine:
         self.proxy_url = proxy_url
         self.log_fn = log_fn
         self.mail = MailServiceClient(base_url=mail_service_url, provider=mail_provider)
+        log_fn(f"[KeygenEngine] mail_service_url={mail_service_url} provider={mail_provider} proxy={proxy_url}")
         self.result = KeygenResult()
 
         # HTTP 会话
