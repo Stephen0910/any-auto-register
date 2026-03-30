@@ -45,6 +45,85 @@ function appNavClass(isActive: boolean) {
   ].join(' ')
 }
 
+function PlatformGroup({
+  groupKey,
+  parentLabel,
+  children,
+  isGroupActive,
+}: {
+  groupKey: string
+  parentLabel: string
+  children: { key: string; label: string; group: string }[]
+  isGroupActive: boolean
+}) {
+  const [open, setOpen] = useState(isGroupActive)
+
+  useEffect(() => {
+    if (isGroupActive) setOpen(true)
+  }, [isGroupActive])
+
+  // 如果父平台也存在于 children 中（同名），从 children 里提取
+  const parentInList = children.find(c => c.key === groupKey)
+  const childItems = children.filter(c => c.key !== groupKey)
+
+  return (
+    <div className="space-y-1">
+      {parentInList ? (
+        <NavLink
+          to={`/accounts/${parentInList.key}`}
+          className={({ isActive }) => [
+            'flex items-center gap-2 rounded-2xl px-3 py-2 text-sm transition-colors',
+            isActive
+              ? 'bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] text-[var(--text-primary)]'
+              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+          ].join(' ')}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]/80" />
+          <span className="flex-1">{parentInList.label}</span>
+          {childItems.length > 0 && (
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(v => !v) }}
+              className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            >
+              {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+          )}
+        </NavLink>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className="flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]/80" />
+          <span className="flex-1 text-left">{parentLabel}</span>
+          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </button>
+      )}
+      {open && childItems.length > 0 && (
+        <div className="ml-4 space-y-1 border-l border-[var(--border-soft)] pl-3">
+          {childItems.map(child => (
+            <NavLink
+              key={child.key}
+              to={`/accounts/${child.key}`}
+              className={({ isActive }) => [
+                'flex items-center gap-2 rounded-xl px-3 py-1.5 text-[13px] transition-colors',
+                isActive
+                  ? 'bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+              ].join(' ')}
+            >
+              <span className="h-1 w-1 rounded-full bg-[var(--accent)]/60" />
+              <span>{child.label}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AccountsSubNav() {
   const location = useLocation()
   const isAccounts = location.pathname.startsWith('/accounts')
@@ -57,9 +136,24 @@ function AccountsSubNav() {
 
   useEffect(() => {
     getPlatforms()
-      .then((data) => setPlatforms((data || []).map((p: any) => ({ key: p.name, label: p.display_name }))))
+      .then((data) => setPlatforms((data || []).map((p: any) => ({ key: p.name, label: p.display_name, group: p.group || '' }))))
       .catch(() => setPlatforms([]))
   }, [])
+
+  // 计算分组结构：有 group 的归入父组，没有的单独显示
+  const groupedPlatforms = (() => {
+    const groups: Record<string, { key: string; label: string; group: string }[]> = {}
+    const standalone: { key: string; label: string; group: string }[] = []
+    platforms.forEach(p => {
+      if (p.group) {
+        if (!groups[p.group]) groups[p.group] = []
+        groups[p.group].push(p)
+      } else {
+        standalone.push(p)
+      }
+    })
+    return { groups, standalone }
+  })()
 
   return (
     <div className="space-y-1">
@@ -76,7 +170,7 @@ function AccountsSubNav() {
       </button>
       {open && (
         <div className="ml-4 space-y-1.5 border-l border-[var(--border-soft)] pl-4">
-          {platforms.map((platform) => (
+          {groupedPlatforms.standalone.map((platform) => (
             <NavLink
               key={platform.key}
               to={`/accounts/${platform.key}`}
@@ -91,6 +185,20 @@ function AccountsSubNav() {
               <span>{platform.label}</span>
             </NavLink>
           ))}
+          {Object.entries(groupedPlatforms.groups).map(([groupKey, children]) => {
+            const parentPlatform = platforms.find(p => p.key === groupKey)
+            const parentLabel = parentPlatform?.label || (groupKey.charAt(0).toUpperCase() + groupKey.slice(1))
+            const isGroupActive = children.some(c => location.pathname === `/accounts/${c.key}`)
+            return (
+              <PlatformGroup
+                key={groupKey}
+                groupKey={groupKey}
+                parentLabel={parentLabel}
+                children={children}
+                isGroupActive={isGroupActive}
+              />
+            )
+          })}
         </div>
       )}
     </div>

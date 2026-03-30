@@ -175,6 +175,7 @@ class PlatformRuntime:
                     name=item["name"],
                     display_name=item["display_name"],
                     version=item["version"],
+                    group=item.get("group", ""),
                     capabilities=PlatformCapabilities(
                         supported_executors=list(item.get("supported_executors", [])),
                         supported_identity_modes=list(item.get("supported_identity_modes", [])),

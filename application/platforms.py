@@ -15,6 +15,7 @@ class PlatformsService:
                     "name": item.name,
                     "display_name": item.display_name,
                     "version": item.version,
+                    "group": item.group,
                     "supported_executors": item.capabilities.supported_executors,
                     "supported_identity_modes": item.capabilities.supported_identity_modes,
                     "supported_oauth_providers": item.capabilities.supported_oauth_providers,

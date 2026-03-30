@@ -46,6 +46,8 @@ class BasePlatform(ABC):
     name: str = ""
     display_name: str = ""
     version: str = "1.0.0"
+    # 分组（用于前端侧栏分组显示，如 "chatgpt_keygen" → group="chatgpt"）
+    group: str = ""
     # 子类声明支持的执行器类型，未列出的自动降级到 protocol
     supported_executors: list = ["protocol", "headless", "headed"]
     supported_identity_modes: list = ["mailbox"]

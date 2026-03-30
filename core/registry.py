@@ -48,5 +48,5 @@ def list_platforms() -> list:
         if isinstance(override, dict):
             caps.update({k: v for k, v in override.items() if k in caps})
         result.append({"name": cls.name, "display_name": cls.display_name,
-                       "version": cls.version, **caps})
+                       "version": cls.version, "group": getattr(cls, "group", ""), **caps})
     return result

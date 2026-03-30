@@ -12,6 +12,7 @@ class ChatGPTKeygenPlatform(BasePlatform):
     name = "chatgpt_keygen"
     display_name = "ChatGPT (Keygen v5)"
     version = "5.0.0"
+    group = "chatgpt"
     supported_executors = ["protocol"]
     supported_identity_modes = ["mailbox"]
 
@@ -35,10 +36,12 @@ class ChatGPTKeygenPlatform(BasePlatform):
     def build_protocol_mailbox_adapter(self):
         def _build_worker(ctx, artifacts):
             from .worker import ChatGPTKeygenWorker
+            from core.config_store import ConfigStore
 
             extra = (self.config.extra or {}) if self.config else {}
-            mail_service_url = extra.get("mail_service_url", "http://10.10.10.8:5500")
-            mail_provider = extra.get("mail_provider", "tempmail_lol")
+            cs = ConfigStore()
+            mail_service_url = extra.get("mail_service_url") or cs.get("keygen_mail_service_url") or "http://10.10.10.8:5500"
+            mail_provider = extra.get("mail_provider") or cs.get("keygen_mail_provider") or "tempmail_lol"
 
             return ChatGPTKeygenWorker(
                 proxy_url=ctx.proxy,

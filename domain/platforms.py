@@ -16,3 +16,4 @@ class PlatformDescriptor:
     display_name: str
     version: str
     capabilities: PlatformCapabilities
+    group: str = ""

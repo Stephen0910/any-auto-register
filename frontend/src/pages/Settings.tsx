@@ -163,6 +163,15 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
     { label: 'X', value: 'x' },
     { label: 'Builder ID', value: 'builderid' },
   ],
+  keygen_mail_provider: [
+    { label: 'TempMail.lol', value: 'tempmail_lol' },
+    { label: 'Mail.tm', value: 'mailtm' },
+    { label: 'DuckMail', value: 'duckmail' },
+    { label: 'MoeMail (sall.cc)', value: 'moemail' },
+    { label: 'CF Worker', value: 'cfworker' },
+    { label: 'YYDS', value: 'yyds' },
+    { label: 'TencentMail', value: 'tencentmail' },
+  ],
   kiro_cpa_auto_upload: [
     { label: '开启', value: 'true' },
     { label: '关闭', value: 'false' },
@@ -217,6 +226,17 @@ const TABS: { id: string; label: string; icon: any; sections?: any[] }[] = [
       items: [
         { key: 'team_manager_url', label: 'API URL', placeholder: 'https://your-tm.example.com' },
         { key: 'team_manager_key', label: 'API Key', secret: true },
+      ],
+    }],
+  },
+  {
+    id: 'chatgpt_keygen', label: 'ChatGPT Keygen', icon: Sparkles,
+    sections: [{
+      section: '邮件服务',
+      desc: '协议注册机 v5 使用独立邮件服务收验证码，与系统邮箱服务隔离',
+      items: [
+        { key: 'keygen_mail_service_url', label: '邮件服务 URL', placeholder: 'http://10.10.10.8:5500' },
+        { key: 'keygen_mail_provider', label: '默认邮箱 Provider', placeholder: 'tempmail_lol' },
       ],
     }],
   },

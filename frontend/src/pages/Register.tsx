@@ -35,6 +35,7 @@ const DEFAULT_FORM: Record<string, any> = {
   chrome_user_data_dir: '',
   chrome_cdp_url: '',
   mail_provider: 'moemail',
+  mail_service_url: '',
   solver_url: 'http://localhost:8889',
 }
 
@@ -109,6 +110,7 @@ export default function Register() {
           chrome_user_data_dir: cfg.chrome_user_data_dir || f.chrome_user_data_dir,
           chrome_cdp_url: cfg.chrome_cdp_url || f.chrome_cdp_url,
           mail_provider: cfg.mail_provider || f.mail_provider,
+          mail_service_url: cfg.keygen_mail_service_url || f.mail_service_url,
           solver_url: cfg.solver_url || f.solver_url,
         }
         const providerFieldKeys = listProviderFieldKeys([
@@ -194,6 +196,7 @@ export default function Register() {
   const submit = async () => {
     const extra: Record<string, any> = {
       mail_provider: form.mail_provider,
+      mail_service_url: form.mail_service_url || undefined,
       identity_provider: form.identity_provider,
       oauth_provider: form.oauth_provider,
       oauth_email_hint: form.oauth_email_hint,
@@ -395,7 +398,27 @@ export default function Register() {
             </CardContent>
           </Card>
 
-          {form.identity_provider === 'mailbox' && (
+          {form.identity_provider === 'mailbox' && form.platform === 'chatgpt_keygen' && (
+            <Card>
+              <CardHeader><CardTitle>Keygen 邮件服务配置</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]">
+                  协议注册机使用独立邮件服务收验证码，与系统邮箱服务隔离。请确保邮件服务地址可访问。
+                </div>
+                <Input label="邮件服务 URL" k="mail_service_url" placeholder="http://10.10.10.8:5500" />
+                <Select label="邮箱 Provider" k="mail_provider" options={[
+                  ['tempmail_lol', 'TempMail.lol'],
+                  ['mailtm', 'Mail.tm'],
+                  ['duckmail', 'DuckMail'],
+                  ['moemail', 'MoeMail (sall.cc)'],
+                  ['cfworker', 'CF Worker'],
+                  ['yyds', 'YYDS'],
+                  ['tencentmail', 'TencentMail'],
+                ]} />
+              </CardContent>
+            </Card>
+          )}
+          {form.identity_provider === 'mailbox' && form.platform !== 'chatgpt_keygen' && (
             <Card>
               <CardHeader><CardTitle>系统邮箱配置</CardTitle></CardHeader>
               <CardContent className="space-y-4">
