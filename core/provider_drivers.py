@@ -105,6 +105,20 @@ MAILBOX_DRIVER_TEMPLATES = [
             {"key": "cfworker_fingerprint", "label": "Fingerprint", "placeholder": "6703363b...", "category": "auth"},
         ],
     },
+    {
+        "provider_type": "mailbox",
+        "driver_type": "mail5500_api",
+        "label": "本地邮件服务 (5500)",
+        "description": "通过本地 HTTP 邮件服务创建临时邮箱并收取验证码，适合 chatgpt_keygen 等协议注册。",
+        "default_auth_mode": "endpoint_only",
+        "auth_modes": [
+            {"value": "endpoint_only", "label": "仅接口地址"},
+        ],
+        "fields": [
+            {"key": "mail5500_api_url", "label": "服务地址", "placeholder": "http://10.10.10.8:5500", "category": "connection"},
+            {"key": "mail5500_provider", "label": "邮箱 Provider", "placeholder": "tempmail_lol", "category": "connection"},
+        ],
+    },
 ]
 
 
@@ -193,6 +207,13 @@ BUILTIN_PROVIDER_DEFINITIONS = [
         "label": "CF Worker（自建域名）",
         "description": "使用你自己的域名和 Worker 邮件服务。",
         "driver_type": "cfworker_admin_api",
+    },
+    {
+        "provider_type": "mailbox",
+        "provider_key": "mail5500",
+        "label": "本地邮件服务 (5500)",
+        "description": "通过本地 HTTP 邮件服务创建临时邮箱并收取验证码，适合 chatgpt_keygen 等协议注册。默认地址 http://10.10.10.8:5500。",
+        "driver_type": "mail5500_api",
     },
     {
         "provider_type": "captcha",

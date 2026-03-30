@@ -130,6 +130,14 @@ def _create_laoudo(extra: dict, proxy: str | None) -> 'BaseMailbox':
     )
 
 
+def _create_mail5500(extra: dict, proxy: str | None) -> 'BaseMailbox':
+    return Mail5500Mailbox(
+        api_url=extra.get("mail5500_api_url", "http://10.10.10.8:5500"),
+        provider=extra.get("mail5500_provider", "tempmail_lol"),
+        proxy=proxy,
+    )
+
+
 MAILBOX_FACTORY_REGISTRY = {
     "tempmail_lol_api": _create_tempmail,
     "duckmail_api": _create_duckmail,
@@ -137,6 +145,7 @@ MAILBOX_FACTORY_REGISTRY = {
     "moemail_api": _create_moemail,
     "cfworker_admin_api": _create_cfworker,
     "laoudo_api": _create_laoudo,
+    "mail5500_api": _create_mail5500,
     # backward-compat fallback
     "tempmail_lol": _create_tempmail,
     "duckmail": _create_duckmail,
@@ -144,6 +153,7 @@ MAILBOX_FACTORY_REGISTRY = {
     "moemail": _create_moemail,
     "cfworker": _create_cfworker,
     "laoudo": _create_laoudo,
+    "mail5500": _create_mail5500,
 }
 
 
@@ -1205,3 +1215,74 @@ class FreemailMailbox(BaseMailbox):
                 pass
             time.sleep(3)
         raise TimeoutError(f"等待验证链接超时 ({timeout}s)")
+
+
+class Mail5500Mailbox(BaseMailbox):
+    """5500 本地邮件服务（HTTP API）"""
+
+    def __init__(self, api_url: str = "http://10.10.10.8:5500", provider: str = "tempmail_lol", proxy: str | None = None):
+        self.api_url = api_url.rstrip("/")
+        self.provider = provider
+        self._session = requests.Session()
+        if proxy:
+            self._session.proxies = {"http": proxy, "https": proxy}
+
+    def get_email(self) -> MailboxAccount:
+        resp = self._session.post(
+            f"{self.api_url}/api/mail/create",
+            json={"provider": self.provider},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        created = data.get("created", [{}])[0]
+        email = created.get("email", "")
+        account_id = created.get("account_id", "")
+        if not email:
+            raise RuntimeError(f"5500 邮件服务返回空邮箱: {data}")
+        return MailboxAccount(email=email, account_id=account_id, extra={"provider": self.provider})
+
+    def get_current_ids(self, account: MailboxAccount) -> set:
+        try:
+            resp = self._session.get(f"{self.api_url}/api/mail/{account.email}/messages", timeout=10)
+            resp.raise_for_status()
+            return {str(m.get("id", "")) for m in resp.json() if m.get("id")}
+        except Exception:
+            return set()
+
+    def wait_for_code(self, account: MailboxAccount, keyword: str = "",
+                      timeout: int = 120, before_ids: set = None,
+                      code_pattern: str = None) -> str:
+        try:
+            kw = keyword or "verification"
+            resp = self._session.get(
+                f"{self.api_url}/api/mail/{account.email}/code",
+                params={"timeout": timeout, "keyword": kw},
+                timeout=timeout + 10,
+            )
+            if resp.status_code == 200:
+                code = resp.json().get("code")
+                if code:
+                    return code
+        except Exception as e:
+            print(f"[Mail5500] wait_for_code 异常: {e}")
+        # 备用：从消息列表提取
+        try:
+            msgs = self.get_messages(account)
+            for msg in msgs:
+                content = " ".join(str(msg.get(k, "")) for k in ("raw", "subject", "text", "html", "source"))
+                pattern = code_pattern or r"\b(\d{4,8})\b"
+                matches = re.findall(pattern, content)
+                if matches:
+                    return matches[0]
+        except Exception:
+            pass
+        raise TimeoutError(f"5500 服务未收到验证码 ({account.email})")
+
+    def get_messages(self, account: MailboxAccount) -> list:
+        try:
+            resp = self._session.get(f"{self.api_url}/api/mail/{account.email}/messages", timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return []
